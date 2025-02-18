@@ -10,9 +10,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  build_rom:
+  prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 240  # زمان لازم برای مرحله آماده‌سازی
 
     steps:
       # مرحله 1: Checkout repository
@@ -23,6 +23,10 @@ jobs:
       - name: تنظیم فضای Swap برای بهبود عملکرد
         run: |
           set -e
+          
+          # خاموش کردن سوایپ قبلی
+          sudo swapoff -a || true
+          sudo rm -f /swapfile || true
           
           # بررسی اینکه سوایپ قبلاً فعال است یا خیر
           if swapon -s | grep -q '/swapfile'; then
@@ -98,6 +102,12 @@ jobs:
         run: |
           dpkg --get-selections | grep -v deinstall
 
+  build:
+    runs-on: ubuntu-latest
+    needs: prepare
+    timeout-minutes: 480  # افزایش زمان timeout برای ساخت‌های طولانی‌تر
+
+    steps:
       # مرحله 9: دانلود و استخراج MIUI Fastboot
       - name: دانلود و استخراج MIUI Fastboot
         run: |
@@ -127,11 +137,34 @@ jobs:
           mkdir -p ../../kernel && mv boot.img ../../kernel/
           echo "✅ استخراج کرنل، وندر و فریمور انجام شد"
 
-      # مرحله 11: تنظیم مسیرهای ساخت
-      - name: تنظیم مسیرهای ساخت
+      # مرحله 11: دانلود کدهای Android 14 (Pixel OS)
+      - name: دانلود کدهای Android 14 (Pixel OS)
         run: |
           set -e
-          echo "KERNEL_DIR=$(pwd)/kernel" >> $GITHUB_ENV
-          echo "VENDOR_DIR=$(pwd)/vendor" >> $GITHUB_ENV
-          echo "FIRMWARE_DIR=$(pwd)/firmware" >> $GITHUB_ENV
-          echo "✅ مسیرهای ساخت تنظیم شدند"
+          mkdir -p android_source
+          cd android_source
+          repo init -u https://github.com/PixelOS-AOSP/platform_manifest.git -b pixel-14.0
+          repo sync -j$(nproc) || (echo "❌ دانلود کدهای Android با مشکل مواجه شد" && exit 1)
+          echo "✅ دانلود کدهای Android 14 (Pixel OS) موفقیت‌آمیز بود"
+
+      # مرحله 12: وارد شدن به محیط ساخت
+      - name: وارد شدن به محیط ساخت
+        run: |
+          set -e
+          source android_source/build/envsetup.sh
+          lunch aosp_chopin-userdebug || (echo "❌ تنظیم lunch ناموفق بود" && exit 1)
+          echo "✅ lunch با موفقیت تنظیم شد"
+
+      # مرحله 13: ساخت ROM
+      - name: ساخت ROM
+        run: |
+          set -e
+          make -j$(nproc) || (echo "❌ ساخت ROM با مشکل مواجه شد" && exit 1)
+          echo "✅ ساخت ROM با موفقیت انجام شد."
+
+      # مرحله 14: انتشار و ذخیره رام ساخته شده
+      - name: انتشار رام ساخته شده
+        run: |
+          set -e
+          cp out/target/product/chopin/*.zip /home/username/roms/
+          echo "✅ رام ساخته شده در مسیر مشخص شده قرار دارد."
