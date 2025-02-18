@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   build_rom:
@@ -18,7 +19,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # مرحله 2: تنظیم فضای Swap برای بهبود عملکرد (با چک کردن شرایط)
+      # مرحله 2: تنظیم فضای Swap برای بهبود عملکرد
       - name: تنظیم فضای Swap برای بهبود عملکرد
         run: |
           set -e
@@ -103,7 +104,7 @@ jobs:
           set -e
           mkdir -p miui_rom
           cd miui_rom
-          wget -O miui_fastboot_rom.tgz "https://bigota.d.miui.com/V14.0.6.0.TKPMIXM/chopin_global_images_V14.0.6.0.TKPMIXM_20240528.0000.00_13.0_global_253b98dc56.tgz" || \
+          wget -O miui_fastboot_rom.tgz "https://cdnorg.d.miui.com/V14.0.6.0.TKPMIXM/chopin_global_images_V14.0.6.0.TKPMIXM_20240528.0000.00_13.0_global_253b98dc56.tgz" || \
               (echo "❌ دانلود MIUI Fastboot ناموفق بود" && exit 1)
           tar -xvf miui_fastboot_rom.tgz --strip-components=1 || \
               (echo "❌ استخراج MIUI Fastboot ناموفق بود" && exit 1)
