@@ -18,40 +18,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # مرحله 2: تنظیم فضای Swap برای بهبود عملکرد
+      # مرحله 2: تنظیم فضای Swap برای بهبود عملکرد (با چک کردن شرایط)
       - name: تنظیم فضای Swap برای بهبود عملکرد
         run: |
           set -e
           
-          # بررسی فضای دیسک
-          echo "بررسی فضای دیسک:"
-          df -h
-
           # بررسی اینکه سوایپ قبلاً فعال است یا خیر
           if swapon -s | grep -q '/swapfile'; then
-            echo "❌ سوایپ قبلاً فعال است. خاموش می‌شود."
-            sudo swapoff /swapfile
-            sudo rm -f /swapfile
-            echo "✅ سوایپ قبلی خاموش و پاک شد."
+            echo "✅ سوایپ قبلاً فعال است."
           else
-            echo "✅ سوایپ قبلاً فعال نیست."
+            echo "❌ سوایپ فعال نیست. در حال ایجاد سوایپ جدید..."
+            
+            # بررسی فضای دیسک
+            echo "بررسی فضای دیسک:"
+            df -h
+            
+            # ایجاد سوایپ جدید
+            sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+            free -h
+            echo "✅ سوایپ جدید با موفقیت ایجاد و فعال شد."
           fi
-          
-          # ایجاد سوایپ جدید (در صورتی که سوایپ وجود نداشت)
-          echo "ایجاد سوایپ جدید..."
-          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
-          
-          # بررسی اینکه فایل سوایپ ایجاد شده است یا نه
-          if [ ! -f /swapfile ]; then
-            echo "❌ فایل سوایپ ایجاد نشد"
-            exit 1
-          fi
-
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          free -h
-          echo "✅ سوایپ جدید با موفقیت ایجاد و فعال شد."
 
       # مرحله 3: تغییر مخازن Ubuntu به سرورهای جایگزین
       - name: تغییر مخازن Ubuntu به سرورهای جایگزین
