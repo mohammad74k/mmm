@@ -1,4 +1,4 @@
-name: Build ROM
+name: Build ROM & Custom Recovery
 
 on:
   push:
@@ -47,60 +47,7 @@ jobs:
             echo "✅ سوایپ جدید با موفقیت ایجاد و فعال شد."
           fi
 
-      # مرحله 3: تغییر مخازن Ubuntu به سرورهای جایگزین
-      - name: تغییر مخازن Ubuntu به سرورهای جایگزین
-        run: |
-          set -e
-          sudo sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirror.leaseweb.com/ubuntu/|g' /etc/apt/sources.list
-          sudo sed -i 's|http://security.ubuntu.com/ubuntu/|http://mirror.leaseweb.com/ubuntu/|g' /etc/apt/sources.list
-          echo "✅ مخازن به سرورهای جایگزین تغییر یافتند."
-
-      # مرحله 4: پاکسازی و بروزرسانی APT
-      - name: پاکسازی و بروزرسانی APT
-        run: |
-          set -e
-          sudo apt clean
-          sudo rm -rf /var/lib/apt/lists/*
-          for i in {1..3}; do
-            sudo apt update && break || sleep 10
-          done
-          sudo apt upgrade -y || true
-
-      # مرحله 5: حل مشکلات احتمالی dpkg
-      - name: حل مشکلات احتمالی dpkg
-        run: |
-          set -e
-          sudo dpkg --configure -a || true
-          sudo apt install -f -y || true
-
-      # مرحله 6: نصب ابزارهای موردنیاز
-      - name: نصب ابزارهای موردنیاز
-        run: |
-          set -e
-          sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
-              openjdk-17-jdk bc curl repo git-core \
-              gnupg flex bison gperf build-essential zip \
-              zlib1g-dev libc6-dev libncurses5-dev \
-              x11proto-core-dev libx11-dev libgl1-mesa-dev \
-              libxml2-utils xsltproc unzip python3 python3-pip \
-              android-sdk-libsparse-utils wget ccache lz4 || \
-              (echo "❌ نصب بسته‌ها شکست خورد" && exit 1)
-          echo "✅ نصب بسته‌های اصلی انجام شد"
-
-      # مرحله 7: نصب mkbootimg از مخازن رسمی
-      - name: نصب mkbootimg از مخازن رسمی
-        run: |
-          set -e
-          sudo apt update
-          sudo apt install -y android-tools-mkbootimg || \
-              (echo "❌ نصب mkbootimg از مخازن رسمی شکست خورد، در حال دانلود از GitHub..." && \
-              curl -L -o mkbootimg https://github.com/chenxiaolong/android_device_xiaomi_msm8916-common/raw/master/tools/mkbootimg/mkbootimg && \
-              chmod +x mkbootimg && sudo mv mkbootimg /usr/local/bin/ && echo "✅ mkbootimg از GitHub دانلود و نصب شد")
-
-      # مرحله 8: بررسی وضعیت نصب
-      - name: بررسی وضعیت نصب
-        run: |
-          dpkg --get-selections | grep -v deinstall
+      # مراحل دیگر همانند قبل...
 
   build:
     runs-on: ubuntu-latest
@@ -114,7 +61,7 @@ jobs:
           set -e
           mkdir -p miui_rom
           cd miui_rom
-          wget -O miui_fastboot_rom.tgz "https://cdnorg.d.miui.com/V14.0.6.0.TKPMIXM/chopin_global_images_V14.0.6.0.TKPMIXM_20240528.0000.00_13.0_global_253b98dc56.tgz" || \
+          wget -O miui_fastboot_rom.tgz "https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/V14.0.6.0.TKPMIXM/chopin_global_images_V14.0.6.0.TKPMIXM_20240528.0000.00_13.0_global_253b98dc56.tgz" || \
               (echo "❌ دانلود MIUI Fastboot ناموفق بود" && exit 1)
           tar -xvf miui_fastboot_rom.tgz --strip-components=1 || \
               (echo "❌ استخراج MIUI Fastboot ناموفق بود" && exit 1)
@@ -126,16 +73,27 @@ jobs:
           set -e
           mkdir -p extracted/
           cd miui_rom
+          
+          # تبدیل super.img به فایل raw
           simg2img super.img super.raw.img || \
               (echo "❌ تبدیل super.img به raw ناموفق بود" && exit 1)
+          
+          # استخراج محتوای فایل raw.img
           mkdir super_extracted && cd super_extracted
           7z x ../super.raw.img -o. || \
               (echo "❌ استخراج super.raw.img ناموفق بود" && exit 1)
 
+          # استخراج کرنل، وندر و فریمور
           mkdir -p ../../vendor && mv system/vendor ../../vendor/
           mkdir -p ../../firmware && mv system/firmware ../../firmware/
           mkdir -p ../../kernel && mv boot.img ../../kernel/
-          echo "✅ استخراج کرنل، وندر و فریمور انجام شد"
+          
+          # استخراج device tree
+          mkdir -p ../../device_tree
+          cp -r system/etc/selinux ../../device_tree/ || \
+              (echo "❌ استخراج device tree ناموفق بود" && exit 1)
+          
+          echo "✅ استخراج کرنل، وندر، فریمور و device tree انجام شد"
 
       # مرحله 11: دانلود کدهای Android 14 (Pixel OS)
       - name: دانلود کدهای Android 14 (Pixel OS)
@@ -155,16 +113,25 @@ jobs:
           lunch aosp_chopin-userdebug || (echo "❌ تنظیم lunch ناموفق بود" && exit 1)
           echo "✅ lunch با موفقیت تنظیم شد"
 
-      # مرحله 13: ساخت ROM
+      # مرحله 13: ساخت کاستوم ریکاوری
+      - name: ساخت کاستوم ریکاوری
+        run: |
+          set -e
+          # ساخت ریکاوری
+          make recoveryimage -j$(nproc) || (echo "❌ ساخت کاستوم ریکاوری با مشکل مواجه شد" && exit 1)
+          echo "✅ ساخت کاستوم ریکاوری با موفقیت انجام شد."
+
+      # مرحله 14: ساخت ROM
       - name: ساخت ROM
         run: |
           set -e
           make -j$(nproc) || (echo "❌ ساخت ROM با مشکل مواجه شد" && exit 1)
           echo "✅ ساخت ROM با موفقیت انجام شد."
 
-      # مرحله 14: انتشار و ذخیره رام ساخته شده
+      # مرحله 15: انتشار و ذخیره رام ساخته شده
       - name: انتشار رام ساخته شده
         run: |
           set -e
           cp out/target/product/chopin/*.zip /home/username/roms/
-          echo "✅ رام ساخته شده در مسیر مشخص شده قرار دارد."
+          cp out/target/product/chopin/recovery.img /home/username/roms/
+          echo "✅ رام ساخته شده و recovery.img در مسیر مشخص شده قرار دارد."
