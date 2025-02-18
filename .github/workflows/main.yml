@@ -83,19 +83,32 @@ jobs:
               zlib1g-dev libc6-dev libncurses5-dev \
               x11proto-core-dev libx11-dev libgl1-mesa-dev \
               libxml2-utils xsltproc unzip python3 python3-pip \
-              android-sdk-libsparse-utils wget ccache lz4 \
-              p7zip-full || \
+              android-sdk-libsparse-utils wget ccache lz4 || \
               (echo "❌ نصب بسته‌ها شکست خورد" && exit 1)
           echo "✅ نصب بسته‌های اصلی انجام شد"
 
-      # نصب simg2img به صورت دستی
-      - name: دانلود و نصب simg2img
+      # مرحله 7: نصب mkbootimg از مخازن رسمی
+      - name: نصب mkbootimg از مخازن رسمی
         run: |
           set -e
-          curl -L -o simg2img https://github.com/chenxiaolong/android_device_xiaomi_msm8916-common/raw/master/tools/simg2img/simg2img
-          chmod +x simg2img
-          sudo mv simg2img /usr/local/bin/
-          echo "✅ simg2img با موفقیت نصب شد."
+          sudo apt update
+          sudo apt install -y android-tools-mkbootimg || \
+              (echo "❌ نصب mkbootimg از مخازن رسمی شکست خورد، در حال دانلود از GitHub..." && \
+              curl -L -o mkbootimg https://github.com/chenxiaolong/android_device_xiaomi_msm8916-common/raw/master/tools/mkbootimg/mkbootimg && \
+              chmod +x mkbootimg && sudo mv mkbootimg /usr/local/bin/ && echo "✅ mkbootimg از GitHub دانلود و نصب شد")
+
+      # مرحله 8: نصب ابزارهای برای ساخت ریکاوری
+      - name: نصب ابزارهای ساخت ریکاوری
+        run: |
+          set -e
+          sudo apt install -y android-tools-fsutils || \
+              (echo "❌ نصب android-tools-fsutils ناموفق بود" && exit 1)
+          echo "✅ ابزارهای ساخت ریکاوری نصب شدند."
+
+      # مرحله 9: بررسی وضعیت نصب
+      - name: بررسی وضعیت نصب
+        run: |
+          dpkg --get-selections | grep -v deinstall
 
   build:
     runs-on: ubuntu-latest
@@ -103,7 +116,7 @@ jobs:
     timeout-minutes: 480  # افزایش زمان timeout برای ساخت‌های طولانی‌تر
 
     steps:
-      # مرحله 9: دانلود و استخراج MIUI Fastboot
+      # مرحله 10: دانلود و استخراج MIUI Fastboot
       - name: دانلود و استخراج MIUI Fastboot
         run: |
           set -e
@@ -111,36 +124,43 @@ jobs:
           cd miui_rom
           wget -O miui_fastboot_rom.tgz "https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/V14.0.6.0.TKPMIXM/chopin_global_images_V14.0.6.0.TKPMIXM_20240528.0000.00_13.0_global_253b98dc56.tgz" || \
               (echo "❌ دانلود MIUI Fastboot ناموفق بود" && exit 1)
+          
+          # نمایش محتوای دایرکتوری برای بررسی فایل‌ها
+          ls -lh
+          
           tar -xvf miui_fastboot_rom.tgz --strip-components=1 || \
               (echo "❌ استخراج MIUI Fastboot ناموفق بود" && exit 1)
           echo "✅ دانلود و استخراج MIUI Fastboot موفقیت‌آمیز بود"
 
-      # مرحله 10: استخراج کرنل، وندر و فریمور
+      # مرحله 11: استخراج کرنل، وندر و فریمور
       - name: استخراج کرنل، وندر و فریمور
         run: |
           set -e
           mkdir -p extracted/
           cd miui_rom
           
-          # بررسی وجود ابزار simg2img
-          which simg2img || (echo "❌ simg2img نصب نشده است" && exit 1)
-          
-          # بررسی وجود فایل super.img
+          # بررسی موجود بودن فایل super.img
           if [ -f "super.img" ]; then
             echo "✅ فایل super.img موجود است."
           else
             echo "❌ فایل super.img پیدا نشد."
             exit 1
           fi
-          
+
           # تبدیل super.img به super.raw.img
           simg2img super.img super.raw.img || \
               (echo "❌ تبدیل super.img به raw ناموفق بود" && exit 1)
+
+          # نمایش محتوای دایرکتوری بعد از تبدیل
+          ls -lh
 
           # استخراج super.raw.img
           mkdir super_extracted && cd super_extracted
           7z x ../super.raw.img -o. || \
               (echo "❌ استخراج super.raw.img ناموفق بود" && exit 1)
+
+          # نمایش محتوای دایرکتوری بعد از استخراج
+          ls -lh
 
           # استخراج کرنل، وندر و فریمور
           mkdir -p ../../vendor && mv system/vendor ../../vendor/
@@ -154,7 +174,7 @@ jobs:
           
           echo "✅ استخراج کرنل، وندر، فریمور و device tree انجام شد"
 
-      # مرحله 11: دانلود کدهای Android 14 (Pixel OS)
+      # مرحله 12: دانلود کدهای Android 14 (Pixel OS)
       - name: دانلود کدهای Android 14 (Pixel OS)
         run: |
           set -e
@@ -164,7 +184,7 @@ jobs:
           repo sync -j$(nproc) || (echo "❌ دانلود کدهای Android با مشکل مواجه شد" && exit 1)
           echo "✅ دانلود کدهای Android 14 (Pixel OS) موفقیت‌آمیز بود"
 
-      # مرحله 12: وارد شدن به محیط ساخت
+      # مرحله 13: وارد شدن به محیط ساخت
       - name: وارد شدن به محیط ساخت
         run: |
           set -e
@@ -172,14 +192,28 @@ jobs:
           lunch aosp_chopin-userdebug || (echo "❌ تنظیم lunch ناموفق بود" && exit 1)
           echo "✅ lunch با موفقیت تنظیم شد"
 
-      # مرحله 13: ساخت ROM
+      # مرحله 14: ساخت کاستوم ریکاوری
+      - name: ساخت کاستوم ریکاوری
+        run: |
+          set -e
+          mkdir -p android_source/device/xiaomi/chopin
+          cd android_source/device/xiaomi/chopin
+          
+          # کپی کردن فایل‌های مربوط به ریکاوری
+          cp -r /path/to/your/recovery/files/* . || (echo "❌ کپی فایل‌ها ناموفق بود" && exit 1)
+          
+          # ساخت ریکاوری
+          make recoveryimage || (echo "❌ ساخت ریکاوری ناموفق بود" && exit 1)
+          echo "✅ کاستوم ریکاوری ساخته شد."
+
+      # مرحله 15: ساخت ROM
       - name: ساخت ROM
         run: |
           set -e
           make -j$(nproc) || (echo "❌ ساخت ROM با مشکل مواجه شد" && exit 1)
           echo "✅ ساخت ROM با موفقیت انجام شد."
 
-      # مرحله 14: انتشار و ذخیره رام ساخته شده
+      # مرحله 16: انتشار و ذخیره رام ساخته شده
       - name: انتشار رام ساخته شده
         run: |
           set -e
