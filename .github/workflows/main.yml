@@ -135,3 +135,44 @@ jobs:
 
           # استخراج کرنل، وندر و فریمور
           mkdir -p ../../vendor && mv system/vendor ../../vendor/
+          mkdir -p ../../firmware && mv system/firmware ../../firmware/
+          mkdir -p ../../kernel && mv boot.img ../../kernel/
+          
+          # استخراج device tree
+          mkdir -p ../../device_tree
+          cp -r system/etc/selinux ../../device_tree/ || \
+              (echo "❌ استخراج device tree ناموفق بود" && exit 1)
+          
+          echo "✅ استخراج کرنل، وندر، فریمور و device tree انجام شد"
+
+      # مرحله 11: دانلود کدهای Android 14 (Pixel OS)
+      - name: دانلود کدهای Android 14 (Pixel OS)
+        run: |
+          set -e
+          mkdir -p android_source
+          cd android_source
+          repo init -u https://github.com/PixelOS-AOSP/platform_manifest.git -b pixel-14.0
+          repo sync -j$(nproc) || (echo "❌ دانلود کدهای Android با مشکل مواجه شد" && exit 1)
+          echo "✅ دانلود کدهای Android 14 (Pixel OS) موفقیت‌آمیز بود"
+
+      # مرحله 12: وارد شدن به محیط ساخت
+      - name: وارد شدن به محیط ساخت
+        run: |
+          set -e
+          source android_source/build/envsetup.sh
+          lunch aosp_chopin-userdebug || (echo "❌ تنظیم lunch ناموفق بود" && exit 1)
+          echo "✅ lunch با موفقیت تنظیم شد"
+
+      # مرحله 13: ساخت ROM
+      - name: ساخت ROM
+        run: |
+          set -e
+          make -j$(nproc) || (echo "❌ ساخت ROM با مشکل مواجه شد" && exit 1)
+          echo "✅ ساخت ROM با موفقیت انجام شد."
+
+      # مرحله 14: انتشار و ذخیره رام ساخته شده
+      - name: انتشار رام ساخته شده
+        run: |
+          set -e
+          cp out/target/product/chopin/*.zip /home/username/roms/
+          echo "✅ رام ساخته شده در مسیر مشخص شده قرار دارد."
