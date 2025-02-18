@@ -1,0 +1,84 @@
+name: Build ROM
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build_rom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: تنظیم فضای Swap برای بهبود عملکرد
+        run: |
+          set -e
+          if [ -f /swapfile ]; then
+            echo "❌ فایل swap قبلاً وجود دارد. تلاش برای حذف آن."
+            sudo swapoff /swapfile || true
+            sudo rm -f /swapfile || true
+          fi
+          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192 status=progress
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+          echo "✅ فضای Swap با موفقیت تنظیم شد"
+
+      - name: Clone the repository
+        uses: actions/checkout@v3
+
+      - name: نصب mkbootimg از سورس
+        run: |
+          set -e
+          sudo apt update
+          sudo apt install -y build-essential git clang lld
+          git clone https://github.com/renyuneyun/mkbootimg.git
+          cd mkbootimg
+          make
+          sudo cp mkbootimg /usr/local/bin/
+          echo "✅ mkbootimg از سورس نصب شد"
+
+      - name: بررسی وضعیت نصب
+        run: |
+          dpkg --get-selections | grep -v deinstall
+
+      - name: دانلود و استخراج MIUI Fastboot
+        run: |
+          set -e
+          mkdir -p miui_rom
+          cd miui_rom
+          wget -O miui_fastboot_rom.tgz "https://bigota.d.miui.com/V14.0.6.0.TKPMIXM/chopin_global_images_V14.0.6.0.TKPMIXM_20240528.0000.00_13.0_global_253b98dc56.tgz" || \
+              (echo "❌ دانلود MIUI Fastboot ناموفق بود" && exit 1)
+          tar -xvf miui_fastboot_rom.tgz --strip-components=1 || \
+              (echo "❌ استخراج MIUI Fastboot ناموفق بود" && exit 1)
+          echo "✅ دانلود و استخراج MIUI Fastboot موفقیت‌آمیز بود"
+
+      - name: استخراج کرنل، وندر و فریمور
+        run: |
+          set -e
+          mkdir -p extracted/
+          cd miui_rom
+          simg2img super.img super.raw.img || \
+              (echo "❌ تبدیل super.img به raw ناموفق بود" && exit 1)
+          mkdir super_extracted && cd super_extracted
+          7z x ../super.raw.img -o. || \
+              (echo "❌ استخراج super.raw.img ناموفق بود" && exit 1)
+
+          mkdir -p ../../vendor && mv system/vendor ../../vendor/
+          mkdir -p ../../firmware && mv system/firmware ../../firmware/
+          mkdir -p ../../kernel && mv boot.img ../../kernel/
+          echo "✅ استخراج کرنل، وندر و فریمور انجام شد"
+
+      - name: تنظیم مسیرهای ساخت
+        run: |
+          set -e
+          echo "KERNEL_DIR=$(pwd)/kernel" >> $GITHUB_ENV
+          echo "VENDOR_DIR=$(pwd)/vendor" >> $GITHUB_ENV
+          echo "FIRMWARE_DIR=$(pwd)/firmware" >> $GITHUB_ENV
+          echo "✅ مسیرهای ساخت تنظیم شدند"
