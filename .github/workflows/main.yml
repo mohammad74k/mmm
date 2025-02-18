@@ -7,7 +7,6 @@ on:
   pull_request:
     branches:
       - main
-  workflow_dispatch:
 
 jobs:
   build_rom:
@@ -15,39 +14,89 @@ jobs:
     timeout-minutes: 360
 
     steps:
+      # مرحله 1: Checkout repository using actions/checkout
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}  # از GITHUB_TOKEN برای دسترسی به مخزن خصوصی استفاده کنید
+
+      # مرحله 2: تنظیم فضای Swap برای بهبود عملکرد
       - name: تنظیم فضای Swap برای بهبود عملکرد
         run: |
           set -e
-          if [ -f /swapfile ]; then
-            echo "❌ فایل swap قبلاً وجود دارد. تلاش برای حذف آن."
-            sudo swapoff /swapfile || true
-            sudo rm -f /swapfile || true
-          fi
-          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192 status=progress
+          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
           free -h
-          echo "✅ فضای Swap با موفقیت تنظیم شد"
+          echo "✅ Swap setup complete"
 
-      - name: Clone the repository
-        uses: actions/checkout@v3
+      # مرحله 3: بررسی و بازیابی کش ccache
+      - name: بررسی و بازیابی کش ccache
+        uses: actions/cache@v3
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+            ccache-
 
-      - name: نصب mkbootimg از سورس
+      # مرحله 4: تغییر مخازن Ubuntu به سرورهای جایگزین
+      - name: تغییر مخازن Ubuntu به سرورهای جایگزین
         run: |
           set -e
-          sudo apt update
-          sudo apt install -y build-essential git clang lld
-          git clone https://github.com/renyuneyun/mkbootimg.git
-          cd mkbootimg
-          make
-          sudo cp mkbootimg /usr/local/bin/
-          echo "✅ mkbootimg از سورس نصب شد"
+          sudo sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirror.leaseweb.com/ubuntu/|g' /etc/apt/sources.list
+          sudo sed -i 's|http://security.ubuntu.com/ubuntu/|http://mirror.leaseweb.com/ubuntu/|g' /etc/apt/sources.list
+          echo "✅ مخازن به سرورهای جایگزین تغییر یافتند."
 
+      # مرحله 5: پاکسازی و بروزرسانی APT
+      - name: پاکسازی و بروزرسانی APT
+        run: |
+          set -e
+          sudo apt clean
+          sudo rm -rf /var/lib/apt/lists/*
+          for i in {1..3}; do
+            sudo apt update && break || sleep 10
+          done
+          sudo apt upgrade -y || true
+
+      # مرحله 6: حل مشکلات احتمالی dpkg
+      - name: حل مشکلات احتمالی dpkg
+        run: |
+          set -e
+          sudo dpkg --configure -a || true
+          sudo apt install -f -y || true
+
+      # مرحله 7: نصب ابزارهای موردنیاز
+      - name: نصب ابزارهای موردنیاز
+        run: |
+          set -e
+          sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
+              openjdk-17-jdk bc curl repo git-core \
+              gnupg flex bison gperf build-essential zip \
+              zlib1g-dev libc6-dev libncurses5-dev \
+              x11proto-core-dev libx11-dev libgl1-mesa-dev \
+              libxml2-utils xsltproc unzip python3 python3-pip \
+              android-sdk-libsparse-utils wget ccache lz4 || \
+              (echo "❌ نصب بسته‌ها شکست خورد" && exit 1)
+          echo "✅ نصب بسته‌های اصلی انجام شد"
+
+      # مرحله 8: نصب mkbootimg از PPA جدید
+      - name: نصب mkbootimg از PPA جدید
+        run: |
+          set -e
+          sudo add-apt-repository -y ppa:ubuntuhandbook1/mkbootimg
+          sudo apt update
+          sudo apt install -y android-tools-mkbootimg || \
+              (echo "❌ نصب mkbootimg شکست خورد" && exit 1)
+          echo "✅ نصب mkbootimg انجام شد"
+
+      # مرحله 9: بررسی وضعیت نصب
       - name: بررسی وضعیت نصب
         run: |
           dpkg --get-selections | grep -v deinstall
 
+      # مرحله 10: دانلود و استخراج MIUI Fastboot
       - name: دانلود و استخراج MIUI Fastboot
         run: |
           set -e
@@ -59,6 +108,7 @@ jobs:
               (echo "❌ استخراج MIUI Fastboot ناموفق بود" && exit 1)
           echo "✅ دانلود و استخراج MIUI Fastboot موفقیت‌آمیز بود"
 
+      # مرحله 11: استخراج کرنل، وندر و فریمور
       - name: استخراج کرنل، وندر و فریمور
         run: |
           set -e
@@ -75,6 +125,7 @@ jobs:
           mkdir -p ../../kernel && mv boot.img ../../kernel/
           echo "✅ استخراج کرنل، وندر و فریمور انجام شد"
 
+      # مرحله 12: تنظیم مسیرهای ساخت
       - name: تنظیم مسیرهای ساخت
         run: |
           set -e
