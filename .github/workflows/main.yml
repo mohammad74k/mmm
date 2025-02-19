@@ -78,7 +78,7 @@ jobs:
         run: |
           mkdir -p miui_rom
           cd miui_rom
-          wget -O miui.tgz "لینک_دانلود_معتبر_فایل_MIUI_خود_را_اینجا_قرار_دهید" || exit 1
+          wget -O miui.tgz "https://bigota.d.miui.com/V14.0.6.0.TKPMIXM/chopin_global_images_V14.0.6.0.TKPMIXM_20240528.0000.00_13.0_global_253b98dc56.tgz" || exit 1
           tar -xvf miui.tgz --strip-components=1
           echo "فایل‌های استخراج شده:"
           ls -R
