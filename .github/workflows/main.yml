@@ -12,209 +12,140 @@ on:
 jobs:
   prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 240  # زمان لازم برای مرحله آماده‌سازی
+    timeout-minutes: 240
 
     steps:
-      # مرحله 1: Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # مرحله 2: تنظیم فضای Swap برای بهبود عملکرد
-      - name: تنظیم فضای Swap برای بهبود عملکرد
+      - name: تنظیم فضای Swap
         run: |
           set -e
-          
-          # خاموش کردن سوایپ قبلی
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
-          
-          # بررسی اینکه سوایپ قبلاً فعال است یا خیر
-          if swapon -s | grep -q '/swapfile'; then
-            echo "✅ سوایپ قبلاً فعال است."
-          else
-            echo "❌ سوایپ فعال نیست. در حال ایجاد سوایپ جدید..."
-            
-            # بررسی فضای دیسک
-            echo "بررسی فضای دیسک:"
-            df -h
-            
-            # ایجاد سوایپ جدید
+          if ! swapon -s | grep -q '/swapfile'; then
             sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
             sudo chmod 600 /swapfile
             sudo mkswap /swapfile
             sudo swapon /swapfile
             free -h
-            echo "✅ سوایپ جدید با موفقیت ایجاد و فعال شد."
           fi
 
-      # مرحله 3: افزودن مخزن Universe
       - name: افزودن مخزن Universe
         run: |
-          set -e
           sudo add-apt-repository -y universe
           sudo apt update
 
-      # مرحله 4: پاکسازی و بروزرسانی APT
       - name: پاکسازی و بروزرسانی APT
         run: |
-          set -e
           sudo apt clean
           sudo rm -rf /var/lib/apt/lists/*
-          for i in {1..3}; do
-            sudo apt update && break || sleep 10
-          done
+          for i in {1..3}; do sudo apt update && break || sleep 10; done
           sudo apt upgrade -y || true
 
-      # مرحله 5: حل مشکلات احتمالی dpkg
-      - name: حل مشکلات احتمالی dpkg
+      - name: حل مشکلات dpkg
         run: |
-          set -e
           sudo dpkg --configure -a || true
           sudo apt install -f -y || true
 
-      # مرحله 6: نصب ابزارهای موردنیاز
-      - name: نصب ابزارهای موردنیاز
+      - name: نصب ابزارهای اصلی
         run: |
-          set -e
           sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
-              openjdk-17-jdk bc curl repo git-core \
-              gnupg flex bison gperf build-essential zip \
-              zlib1g-dev libc6-dev libncurses5-dev \
-              x11proto-core-dev libx11-dev libgl1-mesa-dev \
-              libxml2-utils xsltproc unzip python3 python3-pip \
-              android-sdk-libsparse-utils wget ccache lz4 || \
-              (echo "❌ نصب بسته‌ها شکست خورد" && exit 1)
-          echo "✅ نصب بسته‌های اصلی انجام شد"
+              openjdk-17-jdk repo git-core gnupg flex bison gperf build-essential \
+              zlib1g-dev libc6-dev libncurses5-dev x11proto-core-dev libx11-dev \
+              libgl1-mesa-dev libxml2-utils xsltproc unzip python3 python3-pip \
+              android-sdk-libsparse-utils wget ccache lz4
 
-      # مرحله 7: نصب mkbootimg از مخازن رسمی
-      - name: نصب mkbootimg از مخازن رسمی
+      - name: نصب mkbootimg
         run: |
-          set -e
-          sudo apt update
-          sudo apt install -y android-tools-mkbootimg || \
-              (echo "❌ نصب mkbootimg از مخازن رسمی شکست خورد، در حال دانلود از GitHub..." && \
-              curl -L -o mkbootimg https://github.com/chenxiaolong/android_device_xiaomi_msm8916-common/raw/master/tools/mkbootimg/mkbootimg && \
-              chmod +x mkbootimg && sudo mv mkbootimg /usr/local/bin/ && echo "✅ mkbootimg از GitHub دانلود و نصب شد")
+          if ! sudo apt install -y android-tools-mkbootimg; then
+            curl -LO https://github.com/chenxiaolong/android_device_xiaomi_msm8916-common/raw/master/tools/mkbootimg/mkbootimg
+            chmod +x mkbootimg
+            sudo mv mkbootimg /usr/local/bin/
+          fi
 
-      # مرحله 8: نصب ابزارهای ساخت ریکاوری
-      - name: نصب ابزارهای ساخت ریکاوری
+      - name: نصب ابزارهای جانبی
         run: |
-          set -e
-          sudo apt install -y android-sdk-libsparse-utils f2fs-tools squashfs-tools || \
-              (echo "❌ نصب ابزارهای ساخت ریکاوری ناموفق بود" && exit 1)
-          echo "✅ ابزارهای ساخت ریکاوری نصب شدند."
-
-      # مرحله 9: بررسی وضعیت نصب
-      - name: بررسی وضعیت نصب
-        run: |
-          dpkg --get-selections | grep -v deinstall
+          sudo apt install -y f2fs-tools squashfs-tools
 
   build:
     runs-on: ubuntu-latest
     needs: prepare
-    timeout-minutes: 480  # افزایش زمان timeout برای ساخت‌های طولانی‌تر
+    timeout-minutes: 480
 
     steps:
-      # مرحله 10: دانلود و استخراج MIUI Fastboot
-      - name: دانلود و استخراج MIUI Fastboot
+      - name: دانلود MIUI Fastboot
         run: |
-          set -e
           mkdir -p miui_rom
           cd miui_rom
-          wget -O miui_fastboot_rom.tgz "https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/V14.0.6.0.TKPMIXM/chopin_global_images_V14.0.6.0.TKPMIXM_20240528.0000.00_13.0_global_253b98dc56.tgz" || \
-              (echo "❌ دانلود MIUI Fastboot ناموفق بود" && exit 1)
-          
-          # نمایش محتوای دایرکتوری برای بررسی فایل‌ها
-          ls -lh
-          
-          tar -xvf miui_fastboot_rom.tgz --strip-components=1 || \
-              (echo "❌ استخراج MIUI Fastboot ناموفق بود" && exit 1)
-          echo "✅ دانلود و استخراج MIUI Fastboot موفقیت‌آمیز بود"
+          wget -O miui.tgz "لینک_دانلود_معتبر_فایل_MIUI_خود_را_اینجا_قرار_دهید" || exit 1
+          tar -xvf miui.tgz --strip-components=1
+          echo "فایل‌های استخراج شده:"
+          ls -R
 
-      # مرحله 11: استخراج کرنل، وندر و فریمور
-      - name: استخراج کرنل، وندر و فریمور
+      - name: جستجوی فایل‌های حیاتی
         run: |
-          set -e
-          mkdir -p extracted/
           cd miui_rom
           
-          # بررسی موجود بودن فایل super.img
-          if [ -f "super.img" ]; then
-            echo "✅ فایل super.img موجود است."
+          # جستجوی super.img
+          SUPER_IMG=$(find . -name "super.img" -print -quit)
+          [ -z "$SUPER_IMG" ] && echo "❌ super.img پیدا نشد!" && exit 1
+
+          # جستجوی boot.img
+          BOOT_IMG=$(find . -name "boot.img" -print -quit)
+          [ -z "$BOOT_IMG" ] && echo "❌ boot.img پیدا نشد!" && exit 1
+
+          # جستجوی vendor
+          VENDOR_DIR=$(find . -type d -name "vendor" -print -quit)
+          [ -z "$VENDOR_DIR" ] && echo "❌ پوشه vendor پیدا نشد!" && exit 1
+
+          # جستجوی فایل‌های فریمور
+          FIRMWARE_FILES=$(find . -type f \( -name "modem.img" -o -name "vendor.img" -o -name "firmware*" \))
+          if [ -z "$FIRMWARE_FILES" ]; then
+            echo "⚠️ هیچ فایل فریموری پیدا نشد! این مرحله نادیده گرفته می‌شود."
           else
-            echo "❌ فایل super.img پیدا نشد."
-            exit 1
+            echo "✅ فایل‌های فریمور پیدا شدند:"
+            echo "$FIRMWARE_FILES"
           fi
 
-          # تبدیل super.img به super.raw.img
-          simg2img super.img super.raw.img || \
-              (echo "❌ تبدیل super.img به raw ناموفق بود" && exit 1)
-
-          # نمایش محتوای دایرکتوری بعد از تبدیل
-          ls -lh
-
-          # استخراج super.raw.img
-          mkdir super_extracted && cd super_extracted
-          7z x ../super.raw.img -o. || \
-              (echo "❌ استخراج super.raw.img ناموفق بود" && exit 1)
-
-          # نمایش محتوای دایرکتوری بعد از استخراج
-          ls -lh
-
-          # استخراج کرنل، وندر و فریمور
-          mkdir -p ../../vendor && mv system/vendor ../../vendor/
-          mkdir -p ../../firmware && mv system/firmware ../../firmware/
-          mkdir -p ../../kernel && mv boot.img ../../kernel/
-          
-          # استخراج device tree
-          mkdir -p ../../device_tree
-          cp -r system/etc/selinux ../../device_tree/ || \
-              (echo "❌ استخراج device tree ناموفق بود" && exit 1)
-          
-          echo "✅ استخراج کرنل، وندر، فریمور و device tree انجام شد"
-
-      # مرحله 12: دانلود کدهای Android 14 (Pixel OS)
-      - name: دانلود کدهای Android 14 (Pixel OS)
+      - name: استخراج super.img
         run: |
-          set -e
-          mkdir -p android_source
+          cd miui_rom
+          simg2img super.img super.raw.img
+          mkdir super_extracted
+          7z x super.raw.img -osuper_extracted
+          echo "محتوای super.img:"
+          ls -R super_extracted
+
+      - name: آماده‌سازی فایل‌های منبع
+        run: |
+          mkdir -p android_source/device/xiaomi/chopin
+          cp -r miui_rom/super_extracted/system/etc/selinux android_source/device/xiaomi/chopin/
+          cp miui_rom/boot.img android_source/device/xiaomi/chopin/
+          cp -r miui_rom/vendor android_source/device/xiaomi/chopin/
+
+      - name: دانلود سورس اندروید
+        run: |
           cd android_source
           repo init -u https://github.com/PixelOS-AOSP/platform_manifest.git -b pixel-14.0
-          repo sync -j$(nproc) || (echo "❌ دانلود کدهای Android با مشکل مواجه شد" && exit 1)
-          echo "✅ دانلود کدهای Android 14 (Pixel OS) موفقیت‌آمیز بود"
+          repo sync -j$(nproc)
 
-      # مرحله 13: وارد شدن به محیط ساخت
-      - name: وارد شدن به محیط ساخت
+      - name: کامپایل ریکاوری
         run: |
-          set -e
-          source android_source/build/envsetup.sh
-          lunch aosp_chopin-userdebug || (echo "❌ تنظیم lunch ناموفق بود" && exit 1)
-          echo "✅ lunch با موفقیت تنظیم شد"
+          cd android_source
+          source build/envsetup.sh
+          lunch aosp_chopin-userdebug
+          make recoveryimage -j$(nproc)
 
-      # مرحله 14: ساخت کاستوم ریکاوری
-      - name: ساخت کاستوم ریکاوری
+      - name: کامپایل ROM
         run: |
-          set -e
-          mkdir -p android_source/device/xiaomi/chopin
-          cd android_source/device/xiaomi/chopin
-          
-          # کپی کردن فایل‌های مربوط به ریکاوری
-          cp -r /path/to/your/recovery/files/* . || (echo "❌ کپی فایل‌ها ناموفق بود" && exit 1)
-          
-          # ساخت ریکاوری
-          make recoveryimage || (echo "❌ ساخت ریکاوری ناموفق بود" && exit 1)
-          echo "✅ کاستوم ریکاوری ساخته شد."
+          cd android_source
+          make -j$(nproc)
 
-      # مرحله 15: ساخت ROM
-      - name: ساخت ROM
-        run: |
-          set -e
-          make -j$(nproc) || (echo "❌ ساخت ROM با مشکل مواجه شد" && exit 1)
-          echo "✅ ساخت ROM با موفقیت انجام شد."
-
-      # مرحله 16: انتشار و ذخیره رام ساخته شده
-      - name: انتشار رام ساخته شده
-        run: |
-          set -e
-          cp out/target/product/chopin/*.zip /home/username/roms/
-          echo "✅ رام ساخته شده در مسیر مشخص شده قرار دارد."
+      - name: آپلود آرتیفکت
+        uses: actions/upload-artifact@v3
+        with:
+          name: Custom-ROM
+          path: |
+            android_source/out/target/product/chopin/*.zip
+            android_source/out/target/product/chopin/recovery.img
