@@ -74,56 +74,43 @@ jobs:
     timeout-minutes: 480
 
     steps:
-      - name: دانلود MIUI Fastboot
+      - name: دانلود کاستوم ROM
         run: |
-          mkdir -p miui_rom
-          cd miui_rom
-          wget -O miui.tgz "https://bigota.d.miui.com/V14.0.6.0.TKPMIXM/chopin_global_images_V14.0.6.0.TKPMIXM_20240528.0000.00_13.0_global_253b98dc56.tgz" || exit 1
-          tar -xvf miui.tgz --strip-components=1
+          mkdir -p custom_rom
+          cd custom_rom
+          wget -O evolution_chopin.zip "https://file.alindas.de/d/%5BOneDrive%5D%20Admin/ROM/evolution_chopin-ota-tq3c.230901.001.b1-11050702-community-unsigned/evolution_chopin-ota-tq3c.230901.001.b1-11050702-community-unsigned.zip"
+          unzip evolution_chopin.zip
           echo "فایل‌های استخراج شده:"
           ls -R
 
-      - name: جستجوی فایل‌های حیاتی
+      - name: استخراج payload.bin
         run: |
-          cd miui_rom
-          
-          # جستجوی super.img
-          SUPER_IMG=$(find . -name "super.img" -print -quit)
-          [ -z "$SUPER_IMG" ] && echo "❌ super.img پیدا نشد!" && exit 1
-
-          # جستجوی boot.img
-          BOOT_IMG=$(find . -name "boot.img" -print -quit)
-          [ -z "$BOOT_IMG" ] && echo "❌ boot.img پیدا نشد!" && exit 1
-
-          # جستجوی vendor
-          VENDOR_DIR=$(find . -type d -name "vendor" -print -quit)
-          [ -z "$VENDOR_DIR" ] && echo "❌ پوشه vendor پیدا نشد!" && exit 1
-
-          # جستجوی فایل‌های فریمور
-          FIRMWARE_FILES=$(find . -type f \( -name "modem.img" -o -name "vendor.img" -o -name "firmware*" \))
-          if [ -z "$FIRMWARE_FILES" ]; then
-            echo "⚠️ هیچ فایل فریموری پیدا نشد! این مرحله نادیده گرفته می‌شود."
-          else
-            echo "✅ فایل‌های فریمور پیدا شدند:"
-            echo "$FIRMWARE_FILES"
+          mkdir -p extracted_payload
+          cd custom_rom
+          # استخراج payload.bin از فایل ZIP
+          payload_file=$(find . -name "payload.bin" -print -quit)
+          if [ -z "$payload_file" ]; then
+            echo "❌ payload.bin پیدا نشد!"
+            exit 1
           fi
+          echo "✅ payload.bin پیدا شد: $payload_file"
 
-      - name: استخراج super.img
+      - name: استخراج فایل‌های vendor و device tree
         run: |
-          cd miui_rom
-          simg2img super.img super.raw.img
-          mkdir super_extracted
-          7z x super.raw.img -osuper_extracted
-          echo "محتوای super.img:"
-          ls -R super_extracted
-
+          cd custom_rom
+          # استفاده از payload-dumper برای استخراج فایل‌ها
+          git clone https://github.com/PixelExperience/payload_dumper.git
+          cd payload_dumper
+          python3 extract.py ../payload.bin ../extracted_files
+          echo "فایل‌های استخراج شده از payload.bin:"
+          ls -R ../extracted_files
+          
       - name: آماده‌سازی فایل‌های منبع
         run: |
-          mkdir -p android_source/device/xiaomi/chopin
-          cp -r miui_rom/super_extracted/system/etc/selinux android_source/device/xiaomi/chopin/
-          cp miui_rom/boot.img android_source/device/xiaomi/chopin/
-          cp -r miui_rom/vendor android_source/device/xiaomi/chopin/
-
+          mkdir -p android_source/device/xiaomi/chopin/vendor
+          cp -r custom_rom/extracted_files/vendor/* android_source/device/xiaomi/chopin/vendor/
+          cp -r custom_rom/extracted_files/device/* android_source/device/xiaomi/chopin/
+          
       - name: دانلود سورس اندروید
         run: |
           cd android_source
