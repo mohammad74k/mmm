@@ -78,7 +78,7 @@ jobs:
         run: |
           mkdir -p custom_rom
           cd custom_rom
-          wget -O evolution_chopin.zip "https://file.alindas.de/d/%5BOneDrive%5D%20Admin/ROM/evolution_chopin-ota-tq3c.230901.001.b1-11050702-community-unsigned/evolution_chopin-ota-tq3c.230901.001.b1-11050702-community-unsigned.zip"
+          wget -O evolution_chopin.zip "https://mirrors.ilolicon.com/ROM/evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned/evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned.zip"
           unzip evolution_chopin.zip
           echo "فایل‌های استخراج شده:"
           ls -R
