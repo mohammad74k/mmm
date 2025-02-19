@@ -47,13 +47,12 @@ jobs:
             echo "✅ سوایپ جدید با موفقیت ایجاد و فعال شد."
           fi
 
-      # مرحله 3: تغییر مخازن Ubuntu به سرورهای جایگزین
-      - name: تغییر مخازن Ubuntu به سرورهای جایگزین
+      # مرحله 3: افزودن مخزن Universe
+      - name: افزودن مخزن Universe
         run: |
           set -e
-          sudo sed -i 's|http://archive.ubuntu.com/ubuntu/|http://mirror.leaseweb.com/ubuntu/|g' /etc/apt/sources.list
-          sudo sed -i 's|http://security.ubuntu.com/ubuntu/|http://mirror.leaseweb.com/ubuntu/|g' /etc/apt/sources.list
-          echo "✅ مخازن به سرورهای جایگزین تغییر یافتند."
+          sudo add-apt-repository -y universe
+          sudo apt update
 
       # مرحله 4: پاکسازی و بروزرسانی APT
       - name: پاکسازی و بروزرسانی APT
@@ -97,12 +96,12 @@ jobs:
               curl -L -o mkbootimg https://github.com/chenxiaolong/android_device_xiaomi_msm8916-common/raw/master/tools/mkbootimg/mkbootimg && \
               chmod +x mkbootimg && sudo mv mkbootimg /usr/local/bin/ && echo "✅ mkbootimg از GitHub دانلود و نصب شد")
 
-      # مرحله 8: نصب ابزارهای برای ساخت ریکاوری
+      # مرحله 8: نصب ابزارهای ساخت ریکاوری
       - name: نصب ابزارهای ساخت ریکاوری
         run: |
           set -e
-          sudo apt install -y android-tools-fsutils || \
-              (echo "❌ نصب android-tools-fsutils ناموفق بود" && exit 1)
+          sudo apt install -y android-sdk-libsparse-utils f2fs-tools squashfs-tools || \
+              (echo "❌ نصب ابزارهای ساخت ریکاوری ناموفق بود" && exit 1)
           echo "✅ ابزارهای ساخت ریکاوری نصب شدند."
 
       # مرحله 9: بررسی وضعیت نصب
