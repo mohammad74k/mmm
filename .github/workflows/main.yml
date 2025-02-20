@@ -24,7 +24,7 @@ jobs:
           sudo swapoff -a || true
           sudo rm -f /swapfile || true
           if ! swapon -s | grep -q '/swapfile'; then
-            sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+            sudo fallocate -l 16G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=16384
             sudo chmod 600 /swapfile
             sudo mkswap /swapfile
             sudo swapon /swapfile
@@ -40,7 +40,7 @@ jobs:
         run: |
           sudo apt clean
           sudo rm -rf /var/lib/apt/lists/*
-          for i in {1..3}; do sudo apt update && break || sleep 10; done
+          for i in {1..3}; do sudo apt update && break || sleep 15; done
           sudo apt upgrade -y || true
 
       - name: حل مشکلات dpkg
@@ -48,210 +48,106 @@ jobs:
           sudo dpkg --configure -a || true
           sudo apt install -f -y || true
 
-      - name: نصب ابزارهای اصلی و وابستگی‌ها
+      - name: نصب ابزارهای اصلی
         run: |
           set -e
           install_packages() {
-            echo "در حال نصب بسته‌های ضروری..."
             sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
                 openjdk-17-jdk repo git-core gnupg flex bison gperf build-essential \
                 zlib1g-dev libc6-dev libncurses5-dev x11proto-core-dev libx11-dev \
                 libgl1-mesa-dev libxml2-utils xsltproc unzip python3 python3-pip \
-                android-sdk-libsparse-utils wget ccache lz4 liblzma-dev
+                android-sdk-libsparse-utils wget ccache lz4 liblz4-tool liblzma-dev \
+                f2fs-tools squashfs-tools golang-go
           }
-
-          # تلاش برای نصب بسته‌ها
-          for i in {1..3}; do
-            if install_packages; then
-              echo "✅ بسته‌ها با موفقیت نصب شدند."
-              break
-            else
-              echo "❌ خطا در نصب بسته‌ها. تلاش مجدد ($i/3)..."
-              sleep 10
-            fi
-          done
+          for i in {1..3}; do install_packages && break || sleep 15; done
 
       - name: نصب mkbootimg
         run: |
           if ! sudo apt install -y android-tools-mkbootimg; then
-            echo "❌ نصب mkbootimg از طریق APT ناموفق بود. در حال دانلود از GitHub..."
             curl -LO https://github.com/chenxiaolong/android_device_xiaomi_msm8916-common/raw/master/tools/mkbootimg/mkbootimg
             chmod +x mkbootimg
             sudo mv mkbootimg /usr/local/bin/
           fi
 
-      - name: نصب ابزارهای جانبی
-        run: |
-          sudo apt install -y f2fs-tools squashfs-tools
-
-      - name: نصب Go و بررسی ورژن آن
-        run: |
-          echo "نصب Go و بررسی ورژن..."
-          sudo apt update
-          sudo apt install -y golang-go
-          go version || exit 1
-          go env || exit 1
-
   build:
     runs-on: ubuntu-latest
     needs: prepare
-    timeout-minutes: 480
+    timeout-minutes: 720
 
     steps:
-      - name: دانلود و استخراج هوشمند ROM
+      - name: دانلود و استخراج ROM
         run: |
           mkdir -p custom_rom
           cd custom_rom
-
-          # تعریف نام فایل و URL
           ZIP_FILE="evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned.zip"
           ZIP_URL="https://mirrors.ilolicon.com/ROM/evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned/evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned.zip"
-
-          # بررسی وجود فایل ZIP
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "فایل ZIP یافت نشد. در حال دانلود..."
-            wget --progress=dot -O "$ZIP_FILE" "$ZIP_URL"
+          
+          # دانلود هوشمند با بررسی صحت
+          if [ ! -f "$ZIP_FILE" ] || ! unzip -tq "$ZIP_FILE"; then
+            wget --retry-connrefused --waitretry=30 --tries=5 -O "$ZIP_FILE" "$ZIP_URL"
           fi
+          unzip -q "$ZIP_FILE"
 
-          # بررسی صحت فایل ZIP
-          echo "بررسی صحت فایل ZIP..."
-          if ! unzip -t "$ZIP_FILE"; then
-            echo "❌ فایل ZIP خراب است. در حال دانلود مجدد..."
-            rm -f "$ZIP_FILE"
-            wget --progress=dot -O "$ZIP_FILE" "$ZIP_URL"
-
-            # بررسی مجدد صحت فایل ZIP
-            if ! unzip -t "$ZIP_FILE"; then
-              echo "❌ فایل ZIP همچنان خراب است. لطفاً به صورت دستی بررسی کنید."
-              exit 1
-            fi
-          fi
-
-          # استخراج فایل ZIP
-          echo "استخراج فایل ZIP..."
-          unzip -q "$ZIP_FILE" -d .
-          echo "✅ فایل ZIP با موفقیت استخراج شد."
-          echo "فایل‌های استخراج شده:"
-          ls -R
-
-      - name: استخراج فایل‌های vendor و device tree
+      - name: استخراج payload.bin
         run: |
           cd custom_rom
-
-          # تابع پیشرفته برای بررسی اتصال
-          check_connection() {
-            echo "بررسی اتصال به اینترنت..."
-            for i in {1..3}; do
-              if curl -sI https://github.com >/dev/null; then
-                echo "✅ اتصال به اینترنت برقرار است."
-                return 0
-              else
-                echo "❌ تلاش $i ناموفق. تلاش مجدد در 10 ثانیه..."
-                sleep 10
-              fi
-            done
-            echo "❌ اتصال به اینترنت برقرار نشد!"
-            exit 1
-          }
-
-          # تابع کلون هوشمند
-          smart_clone() {
-            repo_url=$1
-            repo_name=$2
-            echo "تلاش برای کلون $repo_name..."
-            for i in {1..3}; do
-              if git clone "$repo_url"; then
-                echo "✅ $repo_name با موفقیت کلون شد."
-                return 0
-              else
-                echo "❌ خطا در تلاش $i. تلاش مجدد در 10 ثانیه..."
-                sleep 10
-                rm -rf "$repo_name" 2>/dev/null
-              fi
-            done
-            echo "❌ کلون $repo_name پس از 3 تلاش ناموفق!"
-            return 1
-          }
-
-          # تابع استخراج با payload-dumper-go
-          extract_with_payload_dumper_go() {
-            echo "
-            ======================
-            استفاده از payload-dumper-go
-            ======================"
-            if ! command -v payload-dumper-go &>/dev/null; then
-              echo "❌ payload-dumper-go یافت نشد. در حال نصب..."
-              if ! smart_clone "https://github.com/ssut/payload-dumper-go.git" "payload-dumper-go"; then
-                return 1
-              fi
-              cd payload-dumper-go
-              go mod tidy
-              go mod vendor
-              go build -o payload-dumper-go
-              if [ ! -f "payload-dumper-go" ]; then
-                echo "❌ خطا در ساخت payload-dumper-go!"
-                return 1
-              fi
-              sudo mv payload-dumper-go /usr/local/bin/
-              cd ..
-            fi
-
-            payload_file=$(find . -name "payload.bin" -print -quit)
-            if [ -z "$payload_file" ]; then
-              echo "❌ فایل payload.bin یافت نشد!"
-              return 1
-            fi
-
-            mkdir -p extracted_payload
-            if payload-dumper-go -o extracted_payload "$payload_file"; then
-              echo "✅ استخراج با موفقیت انجام شد!"
-              return 0
-            else
-              echo "❌ استخراج با payload-dumper-go ناموفق بود!"
-              return 1
-            fi
-          }
-
-          # اجرای اصلی
-          check_connection
-          if ! extract_with_payload_dumper_go; then
-            echo "❌ خطای بحرانی: امکان استخراج فایل‌ها وجود ندارد!"
-            exit 1
+          payload_file=$(find . -name "payload.bin" -print -quit)
+          
+          # نصب payload-dumper-go
+          if ! command -v payload-dumper-go &>/dev/null; then
+            go install github.com/ssut/payload-dumper-go@latest
           fi
 
-          echo "✅ فایل‌های استخراج شده:"
-          ls -lh extracted_payload
-
-      - name: آماده‌سازی فایل‌های منبع
-        run: |
-          mkdir -p android_source/device/xiaomi/chopin/vendor
-          # بررسی وجود فایل vendor.img در extracted_payload
-          if [ -f "extracted_payload/vendor.img" ]; then
-            echo "✅ فایل vendor.img در extracted_payload پیدا شد."
-            cp extracted_payload/vendor.img android_source/device/xiaomi/chopin/vendor/
+          # استخراج با بررسی دقیق
+          mkdir -p extracted_payload
+          if [ -f "$payload_file" ]; then
+            payload-dumper-go -o extracted_payload "$payload_file"
           else
-            echo "❌ فایل vendor.img در مسیر extracted_payload/vendor.img وجود ندارد!"
+            echo "❌ فایل payload.bin یافت نشد!"
             exit 1
           fi
 
-      - name: دانلود سورس اندروید
+          # بررسی نهایی فایل‌ها
+          echo "فایل‌های استخراج شده:"
+          find extracted_payload -type f -ls
+
+      - name: آماده‌سازی vendor.img
+        run: |
+          cd custom_rom
+          
+          # جستجوی هوشمند vendor.img
+          vendor_img_path=$(find extracted_payload -name "vendor.img" -print -quit)
+          
+          if [ -f "$vendor_img_path" ]; then
+            mkdir -p ../android_source/device/xiaomi/chopin/vendor
+            cp "$vendor_img_path" ../android_source/device/xiaomi/chopin/vendor/
+            echo "✅ vendor.img کپی شد: $(ls -lh ../android_source/device/xiaomi/chopin/vendor/vendor.img)"
+          else
+            echo "❌ فایل vendor.img در extracted_payload یافت نشد!"
+            find extracted_payload -type f -ls
+            exit 1
+          fi
+
+      - name: دانلود سورس
         run: |
           cd android_source
           repo init -u https://github.com/PixelOS-AOSP/platform_manifest.git -b pixel-14.0
-          repo sync -q -j$(nproc)
+          repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags
 
       - name: کامپایل ریکاوری
         run: |
           cd android_source
           source build/envsetup.sh
           lunch aosp_chopin-userdebug
-          make recoveryimage -j$(nproc) >/dev/null 2>&1
+          make -j$(nproc) recoveryimage
 
-      - name: کامپایل ROM
+      - name: کامپایل کامل
         run: |
           cd android_source
-          make -j$(nproc) >/dev/null 2>&1
+          make -j$(nproc)
 
-      - name: بررسی نهایی
+      - name: بسته‌بندی نتایج
         run: |
+          mkdir -p output
+          cp android_source/out/target/product/chopin/*.img output/
           echo "✅ ساخت ROM با موفقیت انجام شد!"
