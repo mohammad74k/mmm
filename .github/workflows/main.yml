@@ -54,7 +54,7 @@ jobs:
               openjdk-17-jdk repo git-core gnupg flex bison gperf build-essential \
               zlib1g-dev libc6-dev libncurses5-dev x11proto-core-dev libx11-dev \
               libgl1-mesa-dev libxml2-utils xsltproc unzip python3 python3-pip \
-              android-sdk-libsparse-utils wget ccache lz4 golang curl
+              android-sdk-libsparse-utils wget ccache lz4
 
       - name: نصب mkbootimg
         run: |
@@ -66,7 +66,7 @@ jobs:
 
       - name: نصب ابزارهای جانبی
         run: |
-          sudo apt install -y f2fs-tools squashfs-tools liblzma-dev
+          sudo apt install -y f2fs-tools squashfs-tools
 
   build:
     runs-on: ubuntu-latest
@@ -161,8 +161,6 @@ jobs:
                 return 1
               fi
               cd payload-dumper-go
-              # نصب وابستگی‌های لازم
-              sudo apt-get install -y liblzma-dev
               go build -o payload-dumper-go
               sudo mv payload-dumper-go /usr/local/bin/
               cd ..
@@ -194,19 +192,12 @@ jobs:
           echo "✅ فایل‌های استخراج شده:"
           ls -lh extracted_payload
 
-          # بررسی وجود فایل vendor.img در extracted_payload
-          if [ -f "extracted_payload/vendor.img" ]; then
-            echo "✅ فایل vendor.img در extracted_payload پیدا شد."
-          else
-            echo "❌ فایل vendor.img در extracted_payload پیدا نشد!"
-            exit 1
-          fi
-
       - name: آماده‌سازی فایل‌های منبع
         run: |
           mkdir -p android_source/device/xiaomi/chopin/vendor
-          # بررسی وجود فایل vendor.img قبل از کپی
+          # بررسی وجود فایل vendor.img در extracted_payload
           if [ -f "extracted_payload/vendor.img" ]; then
+            echo "✅ فایل vendor.img در extracted_payload پیدا شد."
             cp extracted_payload/vendor.img android_source/device/xiaomi/chopin/vendor/
           else
             echo "❌ فایل vendor.img در مسیر extracted_payload/vendor.img وجود ندارد!"
