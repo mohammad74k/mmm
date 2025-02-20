@@ -10,8 +10,6 @@ on:
 env:
   CCACHE_DIR: /home/runner/.ccache
   REPO_DIR: /home/runner/repo
-  TOOL_VERSIONS: '{"MKBOOTIMG":"20231020","PAYLOAD_DUMPER":"1.2.3"}'
-  LIB_VERSIONS: '{"LIBLZMA":"5.2.5","ZLIB":"1.2.11","OPENSSL":"3.0.2"}'
 
 jobs:
   prepare:
@@ -44,46 +42,34 @@ jobs:
           sudo swapon /swapfile
           free -h
 
-      - name: Install Essential Libraries
+      - name: Install Essential Packages
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             build-essential \
+            python3-pip \
+            android-sdk-libsparse-utils \
             liblzma-dev \
             zlib1g-dev \
-            libssl-dev \
-            libncurses5-dev \
-            libxml2-dev \
-            libc6-dev \
-            jq  # نصب jq برای پردازش JSON
+            git \
+            wget \
+            tar
 
-      - name: Install Custom Tools
+      - name: Install Build Tools
         run: |
-          # ایجاد دایرکتوری با دسترسی کامل
-          mkdir -p /home/runner/custom_tools
-          echo "/home/runner/custom_tools" >> $GITHUB_PATH
-          
-          # تبدیل متغیرهای محیطی JSON
-          TOOL_VERSIONS='${{ env.TOOL_VERSIONS }}'
-          echo "Tool Versions: $TOOL_VERSIONS"
+          # نصب mkbootimg از PyPI
+          pip3 install mkbootimg
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-          # نصب mkbootimg با مدیریت خطا
-          MKBOOTIMG_VERSION=$(echo $TOOL_VERSIONS | jq -r '.MKBOOTIMG')
-          wget --tries=5 --retry-connrefused --timeout=30 \
-            "https://github.com/chenxiaolong/mkbootimg/releases/download/$MKBOOTIMG_VERSION/mkbootimg" \
-            -O /home/runner/custom_tools/mkbootimg
-          chmod +x /home/runner/custom_tools/mkbootimg
-
-          # نصب payload-dumper-go با مدیریت خطا
-          PAYLOAD_VERSION=$(echo $TOOL_VERSIONS | jq -r '.PAYLOAD_DUMPER')
-          wget --tries=5 --retry-connrefused --timeout=30 \
-            "https://github.com/ssut/payload-dumper-go/releases/download/v$PAYLOAD_VERSION/payload-dumper-go_linux_amd64" \
-            -O /home/runner/custom_tools/payload-dumper-go
-          chmod +x /home/runner/custom_tools/payload-dumper-go
+          # نصب payload-dumper-go
+          wget --retry-connrefused --tries=5 https://github.com/ssut/payload-dumper-go/releases/download/v1.2.3/payload-dumper-go_1.2.3_linux_amd64.tar.gz
+          tar -xzf payload-dumper-go_1.2.3_linux_amd64.tar.gz
+          chmod +x payload-dumper-go
+          sudo mv payload-dumper-go /usr/local/bin/
 
           # تأیید نصب
-          echo "Installed tools:"
-          ls -lh /home/runner/custom_tools
+          mkbootimg --version
+          payload-dumper-go --version
 
   build:
     runs-on: ubuntu-latest
@@ -95,8 +81,6 @@ jobs:
         run: |
           ccache -M 50G
           ccache -s
-          /home/runner/custom_tools/mkbootimg --version
-          /home/runner/custom_tools/payload-dumper-go --version
 
       - name: Download Source Code
         run: |
@@ -135,15 +119,15 @@ jobs:
             android_source/artifacts/*.img
           retention-days: 7
 
-      - name: Send Notification
+      - name: Notify Status
         if: always()
         uses: actions/github-script@v6
         with:
           script: |
             const status = job.status
             const message = status === 'success' 
-              ? '✅ ساخت ROM با موفقیت انجام شد!' 
-              : '❌ خطا در فرآیند ساخت! کد خطا: ' + context.runId
+              ? '✅ ساخت ROM با موفقیت انجام شد!\nزمان اجرا: ${{ job.steps.*.conclusion }}' 
+              : '❌ خطا در فرآیند ساخت!\nکد خطا: ${{ github.run_id }}'
             
             github.rest.issues.createComment({
               issue_number: context.issue.number,
