@@ -195,17 +195,22 @@ jobs:
           ls -lh extracted_payload
 
           # بررسی وجود پوشه‌های مورد نیاز
-          if [ ! -d "extracted_payload/vendor" ] || [ ! -d "extracted_payload/device" ]; then
-            echo "❌ پوشه vendor یا device یافت نشد!"
+          if [ ! -f "extracted_payload/vendor.img" ]; then
+            echo "❌ فایل vendor.img یافت نشد!"
             exit 1
           fi
 
-          echo "بررسی فایل‌های موجود در extracted_payload:"
-          ls -R extracted_payload
+          echo "استخراج vendor.img..."
+          mkdir -p extracted_payload/vendor
+          sudo mount -o loop extracted_payload/vendor.img extracted_payload/vendor
 
       - name: آماده‌سازی فایل‌های منبع
         run: |
           mkdir -p android_source/device/xiaomi/chopin/vendor
           # بررسی وجود فایل‌ها قبل از کپی
           if [ -d "extracted_payload/vendor" ] && [ "$(ls -A extracted_payload/vendor)" ]; then
-            cp -r extracted_payload/vendor/*
+            cp -r extracted_payload/vendor/* android_source/device/xiaomi/chopin/vendor/
+          else
+            echo "❌ پوشه vendor در مسیر extracted_payload/vendor وجود ندارد!"
+            exit 1
+          fi
