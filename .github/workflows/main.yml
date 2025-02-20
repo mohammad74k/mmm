@@ -237,23 +237,3 @@ jobs:
 
       - name: بررسی نهایی
         run: |
-          if [ ! -f android_source/out/target/product/chopin/*.zip ] || \
-             [ ! -f android_source/out/target/product/chopin/recovery.img ]; then
-            echo "❌ خطا در تولید خروجی!"
-            exit 1
-          fi
-          echo "✅ ساخت ROM با موفقیت انجام شد!"
-
-      - name: آپلود نتایج
-        uses: actions/upload-artifact@v4
-        with:
-          name: ROM-Artifacts
-          path: |
-            android_source/out/target/product/chopin/*.zip
-            android_source/out/target/product/chopin/recovery.img
-
-      - name: پاکسازی
-        run: |
-          rm -rf custom_rom extracted_payload
-          sudo swapoff -a
-          sudo rm -f /swapfile
