@@ -42,33 +42,35 @@ jobs:
           sudo swapon /swapfile
           free -h
 
-      - name: Install Essential Packages
+      - name: Install Dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             build-essential \
-            python3-pip \
-            android-sdk-libsparse-utils \
+            git \
+            make \
+            python3 \
             liblzma-dev \
             zlib1g-dev \
-            git \
             wget \
             tar
 
-      - name: Install Build Tools
+      - name: Install mkbootimg from Source
         run: |
-          # نصب mkbootimg از PyPI
-          pip3 install mkbootimg
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          git clone https://github.com/chenxiaolong/mkbootimg.git
+          cd mkbootimg
+          make
+          sudo mv mkbootimg/mkbootimg /usr/local/bin/
+          cd ..
+          mkbootimg --version
 
-          # نصب payload-dumper-go
-          wget --retry-connrefused --tries=5 https://github.com/ssut/payload-dumper-go/releases/download/v1.2.3/payload-dumper-go_1.2.3_linux_amd64.tar.gz
-          tar -xzf payload-dumper-go_1.2.3_linux_amd64.tar.gz
+      - name: Install payload-dumper-go
+        run: |
+          PAYLOAD_VERSION="1.2.3"
+          wget https://github.com/ssut/payload-dumper-go/releases/download/v${PAYLOAD_VERSION}/payload-dumper-go_${PAYLOAD_VERSION}_linux_amd64.tar.gz
+          tar -xzf payload-dumper-go_${PAYLOAD_VERSION}_linux_amd64.tar.gz
           chmod +x payload-dumper-go
           sudo mv payload-dumper-go /usr/local/bin/
-
-          # تأیید نصب
-          mkbootimg --version
           payload-dumper-go --version
 
   build:
@@ -82,27 +84,27 @@ jobs:
           ccache -M 50G
           ccache -s
 
-      - name: Download Source Code
+      - name: Download Android Source
         run: |
           mkdir -p android_source
           cd android_source
           repo init -u https://github.com/PixelOS-AOSP/platform_manifest.git -b pixel-14.0
           repo sync -c -q -j$(nproc) --force-sync --no-clone-bundle
 
-      - name: Build Preparation
+      - name: Setup Build Environment
         run: |
           cd android_source
           source build/envsetup.sh
           lunch aosp_chopin-userdebug
 
-      - name: Compile ROM
+      - name: Build ROM
         run: |
           cd android_source
           make -j$(nproc) 2>&1 | tee build.log
           mkdir -p artifacts
           cp $OUT/*.img artifacts/
 
-      - name: Post-build Actions
+      - name: Post-build Cleanup
         run: |
           ccache -s
           sudo swapoff -a
