@@ -1,166 +1,236 @@
-name: Advanced ROM Builder
+name: Build ROM
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
-
-env:
-  CCACHE_DIR: /home/runner/.ccache
-  REPO_DIR: /home/runner/repo
-  SWAP_SIZE: 6G
-  CCACHE_SIZE: 40G
-  FIRMWARE_URL: "https://bigota.d.miui.com/V14.0.8.0.TMOMIXM/miui_CHOPINGlobal_V14.0.8.0.TMOMIXM_ABCD123456.zip"
 
 jobs:
   prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 240
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-      - name: Configure System
+      - name: تنظیم فضای Swap
         run: |
-          sudo timedatectl set-timezone Asia/Tehran
-          echo "fs.inotify.max_user_watches=524288" | sudo tee -a /etc/sysctl.conf
-          sudo sysctl -p
-
-      - name: Setup Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.ccache
-            ~/repo
-          key: ${{ runner.os }}-ccache-${{ hashFiles('**/Makefile') }}
-          restore-keys: ${{ runner.os }}-ccache-
-
-      - name: Swap Management
+          set -e
+          sudo swapoff -a || true
+          sudo rm -f /swapfile || true
+          if ! swapon -s | grep -q '/swapfile'; then
+            sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+            free -h
+          fi
+      - name: افزودن مخزن Universe
         run: |
-          sudo fallocate -l ${{ env.SWAP_SIZE }} /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          free -h
-
-      - name: Install Dependencies
+          sudo add-apt-repository -y universe
+          sudo apt update
+      - name: پاکسازی و بروزرسانی APT
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            build-essential git make python3 liblzma-dev \
-            zlib1g-dev wget tar libssl-dev ncurses-utils \
-            unzip bc bison flex libxml2-utils curl
-
-      - name: Install mkbootimg
+          sudo apt clean
+          sudo rm -rf /var/lib/apt/lists/*
+          for i in {1..3}; do sudo apt update && break || sleep 10; done
+          sudo apt upgrade -y || true
+      - name: حل مشکلات dpkg
         run: |
-          git clone https://github.com/chenxiaolong/mkbootimg.git
-          cd mkbootimg
-          make
-          sudo install -Dm755 mkbootimg/mkbootimg /usr/local/bin/
-          mkbootimg --version
-
-      - name: Install payload-dumper-go
+          sudo dpkg --configure -a || true
+          sudo apt install -f -y || true
+      - name: نصب ابزارهای اصلی
         run: |
-          PAYLOAD_VERSION="1.2.3"
-          wget https://github.com/ssut/payload-dumper-go/releases/download/v${PAYLOAD_VERSION}/payload-dumper-go_${PAYLOAD_VERSION}_linux_amd64.tar.gz
-          echo "VERIFY_CHECKSUM_HERE" | sha256sum -c -
-          tar -xzf payload-dumper-go_${PAYLOAD_VERSION}_linux_amd64.tar.gz
-          sudo install -Dm755 payload-dumper-go /usr/local/bin/
-          payload-dumper-go --version
+          sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
+              openjdk-17-jdk repo git-core gnupg flex bison gperf build-essential \
+              zlib1g-dev libc6-dev libncurses5-dev x11proto-core-dev libx11-dev \
+              libgl1-mesa-dev libxml2-utils xsltproc unzip python3 python3-pip \
+              android-sdk-libsparse-utils wget ccache lz4 golang curl
+      - name: نصب mkbootimg
+        run: |
+          if ! sudo apt install -y android-tools-mkbootimg; then
+            curl -LO https://github.com/chenxiaolong/android_device_xiaomi_msm8916-common/raw/master/tools/mkbootimg/mkbootimg
+            chmod +x mkbootimg
+            sudo mv mkbootimg /usr/local/bin/
+          fi
+      - name: نصب ابزارهای جانبی
+        run: |
+          sudo apt install -y f2fs-tools squashfs-tools liblzma-dev
 
   build:
     runs-on: ubuntu-latest
     needs: prepare
-    timeout-minutes: 360
+    timeout-minutes: 480
 
     steps:
-      - name: Initialize Environment
+      - name: دانلود و استخراج هوشمند ROM
         run: |
-          ccache -M ${{ env.CCACHE_SIZE }}
-          ccache -s
-          echo "CCACHE_DIR=${{ env.CCACHE_DIR }}" >> $GITHUB_ENV
+          mkdir -p custom_rom
+          cd custom_rom
+          # تعریف نام فایل و URL
+          ZIP_FILE="evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned.zip"
+          ZIP_URL="https://mirrors.ilolicon.com/ROM/evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned/evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned.zip"
+          # بررسی وجود فایل ZIP
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "فایل ZIP یافت نشد. در حال دانلود..."
+            wget --progress=dot -O "$ZIP_FILE" "$ZIP_URL"
+          fi
+          # بررسی صحت فایل ZIP
+          echo "بررسی صحت فایل ZIP..."
+          if ! unzip -t "$ZIP_FILE"; then
+            echo "❌ فایل ZIP خراب است. در حال دانلود مجدد..."
+            rm -f "$ZIP_FILE"
+            wget --progress=dot -O "$ZIP_FILE" "$ZIP_URL"
+            # بررسی مجدد صحت فایل ZIP
+            if ! unzip -t "$ZIP_FILE"; then
+              echo "❌ فایل ZIP همچنان خراب است. لطفاً به صورت دستی بررسی کنید."
+              exit 1
+            fi
+          fi
+          # استخراج فایل ZIP
+          echo "استخراج فایل ZIP..."
+          unzip -q "$ZIP_FILE" -d .
+          echo "✅ فایل ZIP با موفقیت استخراج شد."
+          echo "فایل‌های استخراج شده:"
+          ls -R
 
-      - name: Download Android Source
+      - name: استخراج فایل‌های vendor و device tree
         run: |
-          mkdir -p android_source
-          cd android_source
-          repo init -u https://github.com/PixelOS-AOSP/platform_manifest.git -b pixel-14.0
-          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle
-
-      - name: Download Firmware Package
-        run: |
-          mkdir -p firmware
-          wget -O firmware/miui.zip ${{ env.FIRMWARE_URL }}
-          unzip firmware/miui.zip payload.bin -d firmware/
-
-      - name: Extract Vendor Image
-        run: |
-          mkdir -p extracted_payload
-          payload-dumper-go -p vendor -o extracted_payload firmware/payload.bin
-          ls -lh extracted_payload/
-
-      - name: Prepare Vendor Files
-        run: |
-          mkdir -p android_source/device/xiaomi/chopin/vendor
+          cd custom_rom
+          # تابع پیشرفته برای بررسی اتصال
+          check_connection() {
+            echo "بررسی اتصال به اینترنت..."
+            for i in {1..3}; do
+              if curl -sI https://github.com >/dev/null; then
+                echo "✅ اتصال به اینترنت برقرار است."
+                return 0
+              else
+                echo "❌ تلاش $i ناموفق. تلاش مجدد در 10 ثانیه..."
+                sleep 10
+              fi
+            done
+            echo "❌ اتصال به اینترنت برقرار نشد!"
+            exit 1
+          }
+          # تابع کلون هوشمند
+          smart_clone() {
+            repo_url=$1
+            repo_name=$2
+            echo "تلاش برای کلون $repo_name..."
+            for i in {1..3}; do
+              if git clone "$repo_url"; then
+                echo "✅ $repo_name با موفقیت کلون شد."
+                return 0
+              else
+                echo "❌ خطا در تلاش $i. تلاش مجدد در 10 ثانیه..."
+                sleep 10
+                rm -rf "$repo_name" 2>/dev/null
+              fi
+            done
+            echo "❌ کلون $repo_name پس از 3 تلاش ناموفق!"
+            return 1
+          }
+          # تابع استخراج با payload-dumper-go
+          extract_with_payload_dumper_go() {
+            echo "
+            ======================
+            استفاده از payload-dumper-go
+            ======================"
+            if ! command -v payload-dumper-go &>/dev/null; then
+              echo "❌ payload-dumper-go یافت نشد. در حال نصب..."
+              if ! smart_clone "https://github.com/ssut/payload-dumper-go.git" "payload-dumper-go"; then
+                return 1
+              fi
+              cd payload-dumper-go
+              # نصب وابستگی‌های لازم
+              sudo apt-get install -y liblzma-dev
+              go build -o payload-dumper-go
+              sudo mv payload-dumper-go /usr/local/bin/
+              cd ..
+            fi
+            payload_file=$(find . -name "payload.bin" -print -quit)
+            if [ -z "$payload_file" ]; then
+              echo "❌ فایل payload.bin یافت نشد!"
+              return 1
+            fi
+            mkdir -p extracted_payload
+            if payload-dumper-go -o extracted_payload "$payload_file"; then
+              echo "✅ استخراج با موفقیت انجام شد!"
+              return 0
+            else
+              echo "❌ استخراج با payload-dumper-go ناموفق بود!"
+              return 1
+            fi
+          }
+          # اجرای اصلی
+          check_connection
+          if ! extract_with_payload_dumper_go; then
+            echo "❌ خطای بحرانی: امکان استخراج فایل‌ها وجود ندارد!"
+            exit 1
+          fi
+          echo "✅ فایل‌های استخراج شده:"
+          ls -lh extracted_payload
+          # بررسی وجود فایل vendor.img در extracted_payload
           if [ -f "extracted_payload/vendor.img" ]; then
-            cp extracted_payload/vendor.img android_source/device/xiaomi/chopin/vendor/
-            echo "✅ Vendor image copied successfully!"
+            echo "✅ فایل vendor.img در extracted_payload پیدا شد."
           else
-            echo "::error::Vendor image not found! Extracted files:"
-            ls extracted_payload/
+            echo "❌ فایل vendor.img در extracted_payload پیدا نشد!"
             exit 1
           fi
 
-      - name: Setup Build Environment
+      - name: آماده‌سازی فایل‌های منبع
+        run: |
+          mkdir -p android_source/device/xiaomi/chopin/vendor
+          # بررسی وجود فایل vendor.img قبل از کپی
+          if [ -f "custom_rom/extracted_payload/vendor.img" ]; then
+              cp custom_rom/extracted_payload/vendor.img android_source/device/xiaomi/chopin/vendor/
+          else
+              echo "❌ فایل vendor.img در مسیر custom_rom/extracted_payload/vendor.img وجود ندارد!"
+              exit 1
+          fi
+
+      - name: دانلود سورس اندروید
+        run: |
+          cd android_source
+          repo init -u https://github.com/PixelOS-AOSP/platform_manifest.git -b pixel-14.0
+          repo sync -q -j$(nproc)
+
+      - name: کامپایل ریکاوری
         run: |
           cd android_source
           source build/envsetup.sh
           lunch aosp_chopin-userdebug
+          make recoveryimage -j$(nproc) >/dev/null 2>&1
 
-      - name: Build ROM
+      - name: کامپایل ROM
         run: |
-          set -eo pipefail
           cd android_source
-          make -j$(nproc) 2>&1 | tee build.log
-          mkdir -p artifacts
-          cp $OUT/*.img artifacts/
+          make -j$(nproc) >/dev/null 2>&1
 
-      - name: Post-build Cleanup
+      - name: بررسی نهایی
         run: |
-          ccache -s
-          sudo swapoff -a
-          sudo rm -f /swapfile
-          df -h
-          free -h
+          if [ ! -f android_source/out/target/product/chopin/*.zip ] || \
+             [ ! -f android_source/out/target/product/chopin/recovery.img ]; then
+            echo "❌ خطا در تولید خروجی!"
+            exit 1
+          fi
+          echo "✅ ساخت ROM با موفقیت انجام شد!"
 
-      - name: Upload Artifacts
+      - name: آپلود نتایج
         uses: actions/upload-artifact@v4
         with:
-          name: rom-artifacts
+          name: ROM-Artifacts
           path: |
-            android_source/build.log
-            android_source/artifacts/*.img
-          retention-days: 7
+            android_source/out/target/product/chopin/*.zip
+            android_source/out/target/product/chopin/recovery.img
 
-      - name: Notify Build Status
-        if: always()
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const { status } = job
-            const duration = (new Date() - new Date(job.started_at)) / 1000
-            const message = status === 'success' 
-              ? `✅ ساخت ROM با موفقیت انجام شد!\nزمان اجرا: ${Math.floor(duration / 60)} دقیقه` 
-              : `❌ خطا در فرآیند ساخت!\nکد خطا: ${context.runId}`
-            
-            if (context.payload.pull_request) {
-              github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: message
-              })
-            }
+      - name: پاکسازی
+        run: |
+          rm -rf custom_rom extracted_payload
+          sudo swapoff -a
+          sudo rm -f /swapfile
