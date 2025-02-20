@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 env:
-  CCACHE_DIR: /github/home/.ccache
-  REPO_DIR: /github/home/repo
+  CCACHE_DIR: /home/runner/.ccache
+  REPO_DIR: /home/runner/repo
   TOOL_VERSIONS: '{"MKBOOTIMG":"20231020","PAYLOAD_DUMPER":"1.2.3"}'
   LIB_VERSIONS: '{"LIBLZMA":"5.2.5","ZLIB":"1.2.11","OPENSSL":"3.0.2"}'
 
@@ -54,22 +54,36 @@ jobs:
             libssl-dev \
             libncurses5-dev \
             libxml2-dev \
-            libc6-dev
+            libc6-dev \
+            jq  # نصب jq برای پردازش JSON
 
       - name: Install Custom Tools
         run: |
-          mkdir -p ~/custom_tools
-          echo "$HOME/custom_tools" >> $GITHUB_PATH
+          # ایجاد دایرکتوری با دسترسی کامل
+          mkdir -p /home/runner/custom_tools
+          echo "/home/runner/custom_tools" >> $GITHUB_PATH
           
-          # Install mkbootimg
-          wget -q "https://github.com/chenxiaolong/mkbootimg/releases/download/$(jq -r '.MKBOOTIMG' <<< '${{ env.TOOL_VERSIONS }}')/mkbootimg" \
-            -O ~/custom_tools/mkbootimg
-          chmod +x ~/custom_tools/mkbootimg
+          # تبدیل متغیرهای محیطی JSON
+          TOOL_VERSIONS='${{ env.TOOL_VERSIONS }}'
+          echo "Tool Versions: $TOOL_VERSIONS"
 
-          # Install payload-dumper-go
-          wget -q "https://github.com/ssut/payload-dumper-go/releases/download/v$(jq -r '.PAYLOAD_DUMPER' <<< '${{ env.TOOL_VERSIONS }}')/payload-dumper-go_linux_amd64" \
-            -O ~/custom_tools/payload-dumper-go
-          chmod +x ~/custom_tools/payload-dumper-go
+          # نصب mkbootimg با مدیریت خطا
+          MKBOOTIMG_VERSION=$(echo $TOOL_VERSIONS | jq -r '.MKBOOTIMG')
+          wget --tries=5 --retry-connrefused --timeout=30 \
+            "https://github.com/chenxiaolong/mkbootimg/releases/download/$MKBOOTIMG_VERSION/mkbootimg" \
+            -O /home/runner/custom_tools/mkbootimg
+          chmod +x /home/runner/custom_tools/mkbootimg
+
+          # نصب payload-dumper-go با مدیریت خطا
+          PAYLOAD_VERSION=$(echo $TOOL_VERSIONS | jq -r '.PAYLOAD_DUMPER')
+          wget --tries=5 --retry-connrefused --timeout=30 \
+            "https://github.com/ssut/payload-dumper-go/releases/download/v$PAYLOAD_VERSION/payload-dumper-go_linux_amd64" \
+            -O /home/runner/custom_tools/payload-dumper-go
+          chmod +x /home/runner/custom_tools/payload-dumper-go
+
+          # تأیید نصب
+          echo "Installed tools:"
+          ls -lh /home/runner/custom_tools
 
   build:
     runs-on: ubuntu-latest
@@ -81,8 +95,8 @@ jobs:
         run: |
           ccache -M 50G
           ccache -s
-          mkbootimg --version
-          payload-dumper-go --version
+          /home/runner/custom_tools/mkbootimg --version
+          /home/runner/custom_tools/payload-dumper-go --version
 
       - name: Download Source Code
         run: |
