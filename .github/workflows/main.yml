@@ -194,22 +194,14 @@ jobs:
               exit 1
           fi
 
-      - name: نصب ابزار repo
+      - name: نصب و استفاده از ابزار repo
         run: |
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
-          echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
-          source ~/.bashrc
           export PATH="$HOME/bin:$PATH"  # اضافه کردن مسیر به PATH برای جلسه فعلی
-
-      - name: بررسی نصب repo
-        run: |
           which repo || echo "❌ ابزار repo یافت نشد!"
           ls -l ~/bin/repo
-
-      - name: دانلود سورس اندروید
-        run: |
           cd android_source
           repo init -u https://github.com/PixelOS-AOSP/platform_manifest.git -b pixel-14.0
           repo sync -q -j$(nproc)
