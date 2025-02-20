@@ -201,6 +201,12 @@ jobs:
           chmod a+x ~/bin/repo
           echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
           source ~/.bashrc
+          export PATH="$HOME/bin:$PATH"  # اضافه کردن مسیر به PATH برای جلسه فعلی
+
+      - name: بررسی نصب repo
+        run: |
+          which repo || echo "❌ ابزار repo یافت نشد!"
+          ls -l ~/bin/repo
 
       - name: دانلود سورس اندروید
         run: |
