@@ -1,257 +1,157 @@
-name: Build ROM
+name: Advanced ROM Builder
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
+
+env:
+  CCACHE_DIR: /github/home/.ccache
+  REPO_DIR: /github/home/repo
+  TOOL_VERSIONS:
+    MKBOOTIMG: "20231020"
+    PAYLOAD_DUMPER: "1.2.3"
+  LIB_VERSIONS:
+    LIBLZMA: "5.2.5"
+    ZLIB: "1.2.11"
+    OPENSSL: "3.0.2"
 
 jobs:
   prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: تنظیم فضای Swap
+      - name: Configure System
         run: |
-          set -e
-          sudo swapoff -a || true
-          sudo rm -f /swapfile || true
-          if ! swapon -s | grep -q '/swapfile'; then
-            sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
-            sudo chmod 600 /swapfile
-            sudo mkswap /swapfile
-            sudo swapon /swapfile
-            free -h
-          fi
+          sudo timedatectl set-timezone Asia/Tehran
+          echo "fs.inotify.max_user_watches=524288" | sudo tee -a /etc/sysctl.conf
+          sudo sysctl -p
 
-      - name: افزودن مخزن Universe
+      - name: Setup Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.ccache
+            ~/repo
+          key: ${{ runner.os }}-${{ hashFiles('**/Makefile') }}-${{ github.run_number }}
+
+      - name: Swap Management
         run: |
-          sudo add-apt-repository -y universe
-          sudo apt update
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
 
-      - name: پاکسازی و بروزرسانی APT
+      - name: Install Essential Libraries
         run: |
-          sudo apt clean
-          sudo rm -rf /var/lib/apt/lists/*
-          for i in {1..3}; do sudo apt update && break || sleep 10; done
-          sudo apt upgrade -y || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            liblzma-dev="${{ env.LIB_VERSIONS.LIBLZMA }}*" \
+            zlib1g-dev="${{ env.LIB_VERSIONS.ZLIB }}*" \
+            libssl-dev="${{ env.LIB_VERSIONS.OPENSSL }}*" \
+            libncurses5-dev \
+            libxml2-dev \
+            libc6-dev
 
-      - name: حل مشکلات dpkg
-        run: |
-          sudo dpkg --configure -a || true
-          sudo apt install -f -y || true
-
-      - name: نصب ابزارهای اصلی و وابستگی‌ها
-        run: |
-          set -e
-          install_packages() {
-            echo "در حال نصب بسته‌های ضروری..."
-            sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
-                openjdk-17-jdk repo git-core gnupg flex bison gperf build-essential \
-                zlib1g-dev libc6-dev libncurses5-dev x11proto-core-dev libx11-dev \
-                libgl1-mesa-dev libxml2-utils xsltproc unzip python3 python3-pip \
-                android-sdk-libsparse-utils wget ccache lz4 liblzma-dev
-          }
-
-          # تلاش برای نصب بسته‌ها
-          for i in {1..3}; do
-            if install_packages; then
-              echo "✅ بسته‌ها با موفقیت نصب شدند."
-              break
-            else
-              echo "❌ خطا در نصب بسته‌ها. تلاش مجدد ($i/3)..."
-              sleep 10
-            fi
+          # Verify library versions
+          for lib in liblzma zlib1g libssl3; do
+            version=$(dpkg -s ${lib}-dev | grep Version | cut -d' ' -f2)
+            echo "Installed ${lib}: $version"
           done
 
-      - name: نصب mkbootimg
+      - name: Install Custom Tools
         run: |
-          if ! sudo apt install -y android-tools-mkbootimg; then
-            echo "❌ نصب mkbootimg از طریق APT ناموفق بود. در حال دانلود از GitHub..."
-            curl -LO https://github.com/chenxiaolong/android_device_xiaomi_msm8916-common/raw/master/tools/mkbootimg/mkbootimg
-            chmod +x mkbootimg
-            sudo mv mkbootimg /usr/local/bin/
-          fi
+          mkdir -p ~/custom_tools
+          echo "$HOME/custom_tools" >> $GITHUB_PATH
 
-      - name: نصب ابزارهای جانبی
-        run: |
-          sudo apt install -y f2fs-tools squashfs-tools
+          # Install mkbootimg
+          wget -q https://github.com/chenxiaolong/mkbootimg/releases/download/${{ env.TOOL_VERSIONS.MKBOOTIMG }}/mkbootimg \
+            -O ~/custom_tools/mkbootimg
+          echo "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08  ~/custom_tools/mkbootimg" | sha256sum -c
+          chmod +x ~/custom_tools/mkbootimg
 
-      - name: نصب Go و بررسی ورژن آن
-        run: |
-          echo "نصب Go و بررسی ورژن..."
-          sudo apt update
-          sudo apt install -y golang-go
-          go version || exit 1
-          go env || exit 1
+          # Install payload-dumper-go
+          wget -q https://github.com/ssut/payload-dumper-go/releases/download/v${{ env.TOOL_VERSIONS.PAYLOAD_DUMPER }}/payload-dumper-go_linux_amd64 \
+            -O ~/custom_tools/payload-dumper-go
+          echo "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  ~/custom_tools/payload-dumper-go" | sha256sum -c
+          chmod +x ~/custom_tools/payload-dumper-go
 
   build:
     runs-on: ubuntu-latest
     needs: prepare
-    timeout-minutes: 480
+    timeout-minutes: 360
 
     steps:
-      - name: دانلود و استخراج هوشمند ROM
+      - name: Initialize Environment
         run: |
-          mkdir -p custom_rom
-          cd custom_rom
+          ccache -M 50G
+          ccache -s
+          repo --version
+          mkbootimg --version
+          payload-dumper-go --version
 
-          # تعریف نام فایل و URL
-          ZIP_FILE="evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned.zip"
-          ZIP_URL="https://mirrors.ilolicon.com/ROM/evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned/evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned.zip"
-
-          # بررسی وجود فایل ZIP
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "فایل ZIP یافت نشد. در حال دانلود..."
-            wget --progress=dot -O "$ZIP_FILE" "$ZIP_URL"
-          fi
-
-          # بررسی صحت فایل ZIP
-          echo "بررسی صحت فایل ZIP..."
-          if ! unzip -t "$ZIP_FILE"; then
-            echo "❌ فایل ZIP خراب است. در حال دانلود مجدد..."
-            rm -f "$ZIP_FILE"
-            wget --progress=dot -O "$ZIP_FILE" "$ZIP_URL"
-
-            # بررسی مجدد صحت فایل ZIP
-            if ! unzip -t "$ZIP_FILE"; then
-              echo "❌ فایل ZIP همچنان خراب است. لطفاً به صورت دستی بررسی کنید."
-              exit 1
-            fi
-          fi
-
-          # استخراج فایل ZIP
-          echo "استخراج فایل ZIP..."
-          unzip -q "$ZIP_FILE" -d .
-          echo "✅ فایل ZIP با موفقیت استخراج شد."
-          echo "فایل‌های استخراج شده:"
-          ls -R
-
-      - name: استخراج فایل‌های vendor و device tree
+      - name: Download Source Code
         run: |
-          cd custom_rom
-
-          # تابع پیشرفته برای بررسی اتصال
-          check_connection() {
-            echo "بررسی اتصال به اینترنت..."
-            for i in {1..3}; do
-              if curl -sI https://github.com >/dev/null; then
-                echo "✅ اتصال به اینترنت برقرار است."
-                return 0
-              else
-                echo "❌ تلاش $i ناموفق. تلاش مجدد در 10 ثانیه..."
-                sleep 10
-              fi
-            done
-            echo "❌ اتصال به اینترنت برقرار نشد!"
-            exit 1
-          }
-
-          # تابع کلون هوشمند
-          smart_clone() {
-            repo_url=$1
-            repo_name=$2
-            echo "تلاش برای کلون $repo_name..."
-            for i in {1..3}; do
-              if git clone "$repo_url"; then
-                echo "✅ $repo_name با موفقیت کلون شد."
-                return 0
-              else
-                echo "❌ خطا در تلاش $i. تلاش مجدد در 10 ثانیه..."
-                sleep 10
-                rm -rf "$repo_name" 2>/dev/null
-              fi
-            done
-            echo "❌ کلون $repo_name پس از 3 تلاش ناموفق!"
-            return 1
-          }
-
-          # تابع استخراج با payload-dumper-go
-          extract_with_payload_dumper_go() {
-            echo "
-            ======================
-            استفاده از payload-dumper-go
-            ======================"
-            if ! command -v payload-dumper-go &>/dev/null; then
-              echo "❌ payload-dumper-go یافت نشد. در حال نصب..."
-              if ! smart_clone "https://github.com/ssut/payload-dumper-go.git" "payload-dumper-go"; then
-                return 1
-              fi
-              cd payload-dumper-go
-              go mod tidy
-              go mod vendor
-              go build -o payload-dumper-go
-              if [ ! -f "payload-dumper-go" ]; then
-                echo "❌ خطا در ساخت payload-dumper-go!"
-                return 1
-              fi
-              sudo mv payload-dumper-go /usr/local/bin/
-              cd ..
-            fi
-
-            payload_file=$(find . -name "payload.bin" -print -quit)
-            if [ -z "$payload_file" ]; then
-              echo "❌ فایل payload.bin یافت نشد!"
-              return 1
-            fi
-
-            mkdir -p extracted_payload
-            if payload-dumper-go -o extracted_payload "$payload_file"; then
-              echo "✅ استخراج با موفقیت انجام شد!"
-              return 0
-            else
-              echo "❌ استخراج با payload-dumper-go ناموفق بود!"
-              return 1
-            fi
-          }
-
-          # اجرای اصلی
-          check_connection
-          if ! extract_with_payload_dumper_go; then
-            echo "❌ خطای بحرانی: امکان استخراج فایل‌ها وجود ندارد!"
-            exit 1
-          fi
-
-          echo "✅ فایل‌های استخراج شده:"
-          ls -lh extracted_payload
-
-      - name: آماده‌سازی فایل‌های منبع
-        run: |
-          mkdir -p android_source/device/xiaomi/chopin/vendor
-          # بررسی وجود فایل vendor.img در extracted_payload
-          if [ -f "extracted_payload/vendor.img" ]; then
-            echo "✅ فایل vendor.img در extracted_payload پیدا شد."
-            cp extracted_payload/vendor.img android_source/device/xiaomi/chopin/vendor/
-          else
-            echo "❌ فایل vendor.img در مسیر extracted_payload/vendor.img وجود ندارد!"
-            exit 1
-          fi
-
-      - name: دانلود سورس اندروید
-        run: |
+          mkdir -p android_source
           cd android_source
           repo init -u https://github.com/PixelOS-AOSP/platform_manifest.git -b pixel-14.0
-          repo sync -q -j$(nproc)
+          repo sync -c -q -j$(nproc) --force-sync --no-clone-bundle
 
-      - name: کامپایل ریکاوری
+      - name: Build Preparation
         run: |
           cd android_source
           source build/envsetup.sh
           lunch aosp_chopin-userdebug
-          make recoveryimage -j$(nproc) >/dev/null 2>&1
 
-      - name: کامپایل ROM
+      - name: Compile ROM
         run: |
           cd android_source
-          make -j$(nproc) >/dev/null 2>&1
+          make -j$(nproc) 2>&1 | tee build.log
+          
+          # Generate flashable images
+          mkdir -p artifacts
+          cp $OUT/*.img artifacts/
 
-      - name: بررسی نهایی
+      - name: Post-build Actions
         run: |
-          echo "✅ ساخت ROM با موفقیت انجام شد!"
+          ccache -s
+          sudo swapoff -a
+          sudo rm -f /swapfile
+          df -h
+          free -h
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: rom-artifacts
+          path: |
+            android_source/build.log
+            android_source/artifacts/*.img
+          retention-days: 7
+
+      - name: Send Notification
+        uses: actions/github-script@v6
+        if: always()
+        with:
+          script: |
+            const status = ${{ job.status }}
+            const message = status === 'success' 
+              ? '✅ ساخت ROM با موفقیت انجام شد!' 
+              : '❌ خطا در فرآیند ساخت! کد خطا: ${{ github.run_id }}'
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: message
+            })
