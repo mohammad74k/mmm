@@ -1,4 +1,4 @@
-name: Build ROM
+name: Build PixelOS ROM
 
 on:
   push:
@@ -30,20 +30,24 @@ jobs:
             sudo swapon /swapfile
             free -h
           fi
+
       - name: افزودن مخزن Universe
         run: |
           sudo add-apt-repository -y universe
           sudo apt update
+
       - name: پاکسازی و بروزرسانی APT
         run: |
           sudo apt clean
           sudo rm -rf /var/lib/apt/lists/*
           for i in {1..3}; do sudo apt update && break || sleep 10; done
           sudo apt upgrade -y || true
+
       - name: حل مشکلات dpkg
         run: |
           sudo dpkg --configure -a || true
           sudo apt install -f -y || true
+
       - name: نصب ابزارهای اصلی
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
@@ -51,6 +55,7 @@ jobs:
               zlib1g-dev libc6-dev libncurses5-dev x11proto-core-dev libx11-dev \
               libgl1-mesa-dev libxml2-utils xsltproc unzip python3 python3-pip \
               android-sdk-libsparse-utils wget ccache lz4 golang curl
+
       - name: نصب mkbootimg
         run: |
           if ! sudo apt install -y android-tools-mkbootimg; then
@@ -58,6 +63,7 @@ jobs:
             chmod +x mkbootimg
             sudo mv mkbootimg /usr/local/bin/
           fi
+
       - name: نصب ابزارهای جانبی
         run: |
           sudo apt install -y f2fs-tools squashfs-tools liblzma-dev
@@ -204,31 +210,16 @@ jobs:
           ls -l ~/bin/repo
           cd android_source
 
-          # تعریف آدرس‌های مخزن
-          REPO_URLS=(
-            "https://github.com/PixelOS-AOSP/platform_manifest.git"
-            "https://gitlab.com/PixelOS-AOSP-Mirror/platform_manifest.git"
-            "https://github.com/AnotherUser/platform_manifest.git"
-          )
+          # استفاده از توکن GitHub برای دسترسی به مخزن
+          git config --global url."https://${{ secrets.GITHUB_TOKEN }}:@github.com/".insteadOf "https://github.com/"
 
-          # تعریف شاخه
+          # تعریف آدرس مخزن PixelOS
+          REPO_URL="https://github.com/PixelOS-AOSP/platform_manifest.git"
           BRANCH="pixel-14.0"
 
-          # تلاش برای repo init و repo sync با گزینه‌های مختلف
-          for REPO_URL in "${REPO_URLS[@]}"; do
-            echo "تلاش با مخزن: $REPO_URL"
-            repo init -u "$REPO_URL" -b "$BRANCH" --no-clone-bundle && break
-            echo "❌ خطا در repo init با مخزن: $REPO_URL"
-          done
-
-          # اگر repo init موفقیت‌آمیز بود، repo sync را اجرا کنید
-          if [ $? -eq 0 ]; then
-            echo "✅ repo init با موفقیت انجام شد. در حال اجرای repo sync..."
-            repo sync -q -j$(nproc) --no-clone-bundle
-          else
-            echo "❌ همه تلاش‌ها برای repo init ناموفق بودند!"
-            exit 1
-          fi
+          # اجرای repo init و repo sync
+          repo init -u "$REPO_URL" -b "$BRANCH" --no-clone-bundle
+          repo sync -q -j$(nproc) --no-clone-bundle
 
       - name: کامپایل ریکاوری
         run: |
