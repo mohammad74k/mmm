@@ -48,17 +48,33 @@ jobs:
           sudo dpkg --configure -a || true
           sudo apt install -f -y || true
 
-      - name: نصب ابزارهای اصلی
+      - name: نصب ابزارهای اصلی و وابستگی‌ها
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
-              openjdk-17-jdk repo git-core gnupg flex bison gperf build-essential \
-              zlib1g-dev libc6-dev libncurses5-dev x11proto-core-dev libx11-dev \
-              libgl1-mesa-dev libxml2-utils xsltproc unzip python3 python3-pip \
-              android-sdk-libsparse-utils wget ccache lz4
+          set -e
+          install_packages() {
+            echo "در حال نصب بسته‌های ضروری..."
+            sudo DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
+                openjdk-17-jdk repo git-core gnupg flex bison gperf build-essential \
+                zlib1g-dev libc6-dev libncurses5-dev x11proto-core-dev libx11-dev \
+                libgl1-mesa-dev libxml2-utils xsltproc unzip python3 python3-pip \
+                android-sdk-libsparse-utils wget ccache lz4 liblzma-dev
+          }
+
+          # تلاش برای نصب بسته‌ها
+          for i in {1..3}; do
+            if install_packages; then
+              echo "✅ بسته‌ها با موفقیت نصب شدند."
+              break
+            else
+              echo "❌ خطا در نصب بسته‌ها. تلاش مجدد ($i/3)..."
+              sleep 10
+            fi
+          done
 
       - name: نصب mkbootimg
         run: |
           if ! sudo apt install -y android-tools-mkbootimg; then
+            echo "❌ نصب mkbootimg از طریق APT ناموفق بود. در حال دانلود از GitHub..."
             curl -LO https://github.com/chenxiaolong/android_device_xiaomi_msm8916-common/raw/master/tools/mkbootimg/mkbootimg
             chmod +x mkbootimg
             sudo mv mkbootimg /usr/local/bin/
@@ -169,7 +185,8 @@ jobs:
                 return 1
               fi
               cd payload-dumper-go
-              go get -v ./...
+              go mod tidy
+              go mod vendor
               go build -o payload-dumper-go
               if [ ! -f "payload-dumper-go" ]; then
                 echo "❌ خطا در ساخت payload-dumper-go!"
@@ -237,3 +254,4 @@ jobs:
 
       - name: بررسی نهایی
         run: |
+          echo "✅ ساخت ROM با موفقیت انجام شد!"
