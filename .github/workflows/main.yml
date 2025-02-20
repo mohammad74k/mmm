@@ -162,6 +162,10 @@ jobs:
               fi
               cd payload-dumper-go
               go build -o payload-dumper-go
+              if [ ! -f "payload-dumper-go" ]; then
+                echo "❌ خطا در ساخت payload-dumper-go!"
+                return 1
+              fi
               sudo mv payload-dumper-go /usr/local/bin/
               cd ..
             fi
