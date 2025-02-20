@@ -79,8 +79,8 @@ jobs:
         run: |
           mkdir -p custom_rom
           cd custom_rom
-          ZIP_FILE="evolution_chopin-ota.zip"
-          ZIP_URL="https://mirrors.ilolicon.com/ROM/evolution_chopin-ota.zip"
+          ZIP_FILE="evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned.zip"
+          ZIP_URL="https://mirrors.ilolicon.com/ROM/evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned/evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned.zip"
           
           if [ ! -f "$ZIP_FILE" ] || ! unzip -tq "$ZIP_FILE"; then
             wget --retry-connrefused --waitretry=30 --tries=5 -O "$ZIP_FILE" "$ZIP_URL"
