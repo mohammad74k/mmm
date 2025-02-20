@@ -194,12 +194,17 @@ jobs:
           echo "✅ فایل‌های استخراج شده:"
           ls -lh extracted_payload
 
+          # اضافه کردن دستور بررسی فایل‌ها
+          echo "بررسی محتوای پوشه extracted_payload/vendor"
+          ls -lh extracted_payload/vendor
+
           # بررسی وجود پوشه‌های مورد نیاز
-          if [ ! -f "extracted_payload/vendor.img" ]; then
-            echo "❌ فایل vendor.img یافت نشد!"
+          if [ ! -d "extracted_payload/vendor" ] || [ ! "$(ls -A extracted_payload/vendor)" ]; then
+            echo "❌ پوشه vendor در مسیر extracted_payload/vendor وجود ندارد!"
             exit 1
           fi
 
+          # استخراج vendor.img
           echo "استخراج vendor.img..."
           mkdir -p extracted_payload/vendor
           sudo mount -o loop extracted_payload/vendor.img extracted_payload/vendor
