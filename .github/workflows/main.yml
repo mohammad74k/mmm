@@ -10,6 +10,9 @@ on:
 env:
   CCACHE_DIR: /home/runner/.ccache
   REPO_DIR: /home/runner/repo
+  SWAP_SIZE: 6G
+  CCACHE_SIZE: 40G
+  FIRMWARE_URL: "https://bigota.d.miui.com/V14.0.8.0.TMOMIXM/miui_CHOPINGlobal_V14.0.8.0.TMOMIXM_ABCD123456.zip"
 
 jobs:
   prepare:
@@ -27,16 +30,17 @@ jobs:
           sudo sysctl -p
 
       - name: Setup Cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.ccache
             ~/repo
-          key: ${{ runner.os }}-${{ hashFiles('**/Makefile') }}-${{ github.run_number }}
+          key: ${{ runner.os }}-ccache-${{ hashFiles('**/Makefile') }}
+          restore-keys: ${{ runner.os }}-ccache-
 
       - name: Swap Management
         run: |
-          sudo fallocate -l 8G /swapfile
+          sudo fallocate -l ${{ env.SWAP_SIZE }} /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
@@ -46,31 +50,25 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            git \
-            make \
-            python3 \
-            liblzma-dev \
-            zlib1g-dev \
-            wget \
-            tar
+            build-essential git make python3 liblzma-dev \
+            zlib1g-dev wget tar libssl-dev ncurses-utils \
+            unzip bc bison flex libxml2-utils curl
 
-      - name: Install mkbootimg from Source
+      - name: Install mkbootimg
         run: |
           git clone https://github.com/chenxiaolong/mkbootimg.git
           cd mkbootimg
           make
-          sudo mv mkbootimg/mkbootimg /usr/local/bin/
-          cd ..
+          sudo install -Dm755 mkbootimg/mkbootimg /usr/local/bin/
           mkbootimg --version
 
       - name: Install payload-dumper-go
         run: |
           PAYLOAD_VERSION="1.2.3"
           wget https://github.com/ssut/payload-dumper-go/releases/download/v${PAYLOAD_VERSION}/payload-dumper-go_${PAYLOAD_VERSION}_linux_amd64.tar.gz
+          echo "VERIFY_CHECKSUM_HERE" | sha256sum -c -
           tar -xzf payload-dumper-go_${PAYLOAD_VERSION}_linux_amd64.tar.gz
-          chmod +x payload-dumper-go
-          sudo mv payload-dumper-go /usr/local/bin/
+          sudo install -Dm755 payload-dumper-go /usr/local/bin/
           payload-dumper-go --version
 
   build:
@@ -81,15 +79,40 @@ jobs:
     steps:
       - name: Initialize Environment
         run: |
-          ccache -M 50G
+          ccache -M ${{ env.CCACHE_SIZE }}
           ccache -s
+          echo "CCACHE_DIR=${{ env.CCACHE_DIR }}" >> $GITHUB_ENV
 
       - name: Download Android Source
         run: |
           mkdir -p android_source
           cd android_source
           repo init -u https://github.com/PixelOS-AOSP/platform_manifest.git -b pixel-14.0
-          repo sync -c -q -j$(nproc) --force-sync --no-clone-bundle
+          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle
+
+      - name: Download Firmware Package
+        run: |
+          mkdir -p firmware
+          wget -O firmware/miui.zip ${{ env.FIRMWARE_URL }}
+          unzip firmware/miui.zip payload.bin -d firmware/
+
+      - name: Extract Vendor Image
+        run: |
+          mkdir -p extracted_payload
+          payload-dumper-go -p vendor -o extracted_payload firmware/payload.bin
+          ls -lh extracted_payload/
+
+      - name: Prepare Vendor Files
+        run: |
+          mkdir -p android_source/device/xiaomi/chopin/vendor
+          if [ -f "extracted_payload/vendor.img" ]; then
+            cp extracted_payload/vendor.img android_source/device/xiaomi/chopin/vendor/
+            echo "✅ Vendor image copied successfully!"
+          else
+            echo "::error::Vendor image not found! Extracted files:"
+            ls extracted_payload/
+            exit 1
+          fi
 
       - name: Setup Build Environment
         run: |
@@ -99,6 +122,7 @@ jobs:
 
       - name: Build ROM
         run: |
+          set -eo pipefail
           cd android_source
           make -j$(nproc) 2>&1 | tee build.log
           mkdir -p artifacts
@@ -113,7 +137,7 @@ jobs:
           free -h
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: rom-artifacts
           path: |
@@ -121,19 +145,22 @@ jobs:
             android_source/artifacts/*.img
           retention-days: 7
 
-      - name: Notify Status
+      - name: Notify Build Status
         if: always()
         uses: actions/github-script@v6
         with:
           script: |
-            const status = job.status
+            const { status } = job
+            const duration = (new Date() - new Date(job.started_at)) / 1000
             const message = status === 'success' 
-              ? '✅ ساخت ROM با موفقیت انجام شد!\nزمان اجرا: ${{ job.steps.*.conclusion }}' 
-              : '❌ خطا در فرآیند ساخت!\nکد خطا: ${{ github.run_id }}'
+              ? `✅ ساخت ROM با موفقیت انجام شد!\nزمان اجرا: ${Math.floor(duration / 60)} دقیقه` 
+              : `❌ خطا در فرآیند ساخت!\nکد خطا: ${context.runId}`
             
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: message
-            })
+            if (context.payload.pull_request) {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: message
+              })
+            }
