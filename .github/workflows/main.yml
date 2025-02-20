@@ -10,13 +10,8 @@ on:
 env:
   CCACHE_DIR: /github/home/.ccache
   REPO_DIR: /github/home/repo
-  TOOL_VERSIONS:
-    MKBOOTIMG: "20231020"
-    PAYLOAD_DUMPER: "1.2.3"
-  LIB_VERSIONS:
-    LIBLZMA: "5.2.5"
-    ZLIB: "1.2.11"
-    OPENSSL: "3.0.2"
+  TOOL_VERSIONS: '{"MKBOOTIMG":"20231020","PAYLOAD_DUMPER":"1.2.3"}'
+  LIB_VERSIONS: '{"LIBLZMA":"5.2.5","ZLIB":"1.2.11","OPENSSL":"3.0.2"}'
 
 jobs:
   prepare:
@@ -26,8 +21,6 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Configure System
         run: |
@@ -56,34 +49,26 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             build-essential \
-            liblzma-dev="${{ env.LIB_VERSIONS.LIBLZMA }}*" \
-            zlib1g-dev="${{ env.LIB_VERSIONS.ZLIB }}*" \
-            libssl-dev="${{ env.LIB_VERSIONS.OPENSSL }}*" \
+            liblzma-dev \
+            zlib1g-dev \
+            libssl-dev \
             libncurses5-dev \
             libxml2-dev \
             libc6-dev
-
-          # Verify library versions
-          for lib in liblzma zlib1g libssl3; do
-            version=$(dpkg -s ${lib}-dev | grep Version | cut -d' ' -f2)
-            echo "Installed ${lib}: $version"
-          done
 
       - name: Install Custom Tools
         run: |
           mkdir -p ~/custom_tools
           echo "$HOME/custom_tools" >> $GITHUB_PATH
-
+          
           # Install mkbootimg
-          wget -q https://github.com/chenxiaolong/mkbootimg/releases/download/${{ env.TOOL_VERSIONS.MKBOOTIMG }}/mkbootimg \
+          wget -q "https://github.com/chenxiaolong/mkbootimg/releases/download/$(jq -r '.MKBOOTIMG' <<< '${{ env.TOOL_VERSIONS }}')/mkbootimg" \
             -O ~/custom_tools/mkbootimg
-          echo "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08  ~/custom_tools/mkbootimg" | sha256sum -c
           chmod +x ~/custom_tools/mkbootimg
 
           # Install payload-dumper-go
-          wget -q https://github.com/ssut/payload-dumper-go/releases/download/v${{ env.TOOL_VERSIONS.PAYLOAD_DUMPER }}/payload-dumper-go_linux_amd64 \
+          wget -q "https://github.com/ssut/payload-dumper-go/releases/download/v$(jq -r '.PAYLOAD_DUMPER' <<< '${{ env.TOOL_VERSIONS }}')/payload-dumper-go_linux_amd64" \
             -O ~/custom_tools/payload-dumper-go
-          echo "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  ~/custom_tools/payload-dumper-go" | sha256sum -c
           chmod +x ~/custom_tools/payload-dumper-go
 
   build:
@@ -96,7 +81,6 @@ jobs:
         run: |
           ccache -M 50G
           ccache -s
-          repo --version
           mkbootimg --version
           payload-dumper-go --version
 
@@ -117,8 +101,6 @@ jobs:
         run: |
           cd android_source
           make -j$(nproc) 2>&1 | tee build.log
-          
-          # Generate flashable images
           mkdir -p artifacts
           cp $OUT/*.img artifacts/
 
@@ -140,14 +122,14 @@ jobs:
           retention-days: 7
 
       - name: Send Notification
-        uses: actions/github-script@v6
         if: always()
+        uses: actions/github-script@v6
         with:
           script: |
-            const status = ${{ job.status }}
+            const status = job.status
             const message = status === 'success' 
               ? '✅ ساخت ROM با موفقیت انجام شد!' 
-              : '❌ خطا در فرآیند ساخت! کد خطا: ${{ github.run_id }}'
+              : '❌ خطا در فرآیند ساخت! کد خطا: ' + context.runId
             
             github.rest.issues.createComment({
               issue_number: context.issue.number,
