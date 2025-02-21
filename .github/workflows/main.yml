@@ -74,6 +74,9 @@ jobs:
     timeout-minutes: 480
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
       - name: دانلود و استخراج هوشمند ROM
         run: |
           mkdir -p custom_rom
@@ -81,29 +84,29 @@ jobs:
           # تعریف نام فایل و URL
           ZIP_FILE="evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned.zip"
           ZIP_URL="https://mirrors.ilolicon.com/ROM/evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned/evolution_chopin-ota-tq3c.230901.001.b1-04040628-community-unsigned.zip"
+          
           # بررسی وجود فایل ZIP
           if [ ! -f "$ZIP_FILE" ]; then
             echo "فایل ZIP یافت نشد. در حال دانلود..."
             wget --progress=dot -O "$ZIP_FILE" "$ZIP_URL"
           fi
+          
           # بررسی صحت فایل ZIP
           echo "بررسی صحت فایل ZIP..."
           if ! unzip -t "$ZIP_FILE"; then
             echo "❌ فایل ZIP خراب است. در حال دانلود مجدد..."
             rm -f "$ZIP_FILE"
             wget --progress=dot -O "$ZIP_FILE" "$ZIP_URL"
-            # بررسی مجدد صحت فایل ZIP
             if ! unzip -t "$ZIP_FILE"; then
               echo "❌ فایل ZIP همچنان خراب است. لطفاً به صورت دستی بررسی کنید."
               exit 1
             fi
           fi
+          
           # استخراج فایل ZIP
           echo "استخراج فایل ZIP..."
           unzip -q "$ZIP_FILE" -d .
           echo "✅ فایل ZIP با موفقیت استخراج شد."
-          echo "فایل‌های استخراج شده:"
-          ls -R
 
       - name: استخراج فایل‌های vendor و device tree
         run: |
@@ -123,38 +126,15 @@ jobs:
             echo "❌ اتصال به اینترنت برقرار نشد!"
             exit 1
           }
-          # تابع کلون هوشمند
-          smart_clone() {
-            repo_url=$1
-            repo_name=$2
-            echo "تلاش برای کلون $repo_name..."
-            for i in {1..3}; do
-              if git clone "$repo_url"; then
-                echo "✅ $repo_name با موفقیت کلون شد."
-                return 0
-              else
-                echo "❌ خطا در تلاش $i. تلاش مجدد در 10 ثانیه..."
-                sleep 10
-                rm -rf "$repo_name" 2>/dev/null
-              fi
-            done
-            echo "❌ کلون $repo_name پس از 3 تلاش ناموفق!"
-            return 1
-          }
+
           # تابع استخراج با payload-dumper-go
           extract_with_payload_dumper_go() {
-            echo "
-            ======================
-            استفاده از payload-dumper-go
-            ======================"
+            echo "======================\nاستفاده از payload-dumper-go\n======================"
             if ! command -v payload-dumper-go &>/dev/null; then
               echo "❌ payload-dumper-go یافت نشد. در حال نصب..."
-              if ! smart_clone "https://github.com/ssut/payload-dumper-go.git" "payload-dumper-go"; then
-                return 1
-              fi
+              sudo apt install -y liblzma-dev
+              git clone https://github.com/ssut/payload-dumper-go.git
               cd payload-dumper-go
-              # نصب وابستگی‌های لازم
-              sudo apt-get install -y liblzma-dev
               go build -o payload-dumper-go
               sudo mv payload-dumper-go /usr/local/bin/
               cd ..
@@ -173,6 +153,7 @@ jobs:
               return 1
             fi
           }
+
           # اجرای اصلی
           check_connection
           if ! extract_with_payload_dumper_go; then
@@ -181,24 +162,39 @@ jobs:
           fi
           echo "✅ فایل‌های استخراج شده:"
           ls -lh extracted_payload
-          # بررسی وجود فایل vendor.img در extracted_payload
-          if [ -f "extracted_payload/vendor.img" ]; then
-            echo "✅ فایل vendor.img در extracted_payload پیدا شد."
-          else
-            echo "❌ فایل vendor.img در extracted_payload پیدا نشد!"
-            exit 1
-          fi
 
-      - name: آماده‌سازی فایل‌های منبع
+      - name: کپی فایل‌های vendor به مسیر صحیح
         run: |
           mkdir -p android_source/device/xiaomi/chopin/vendor
-          # بررسی وجود فایل vendor.img قبل از کپی
           if [ -f "custom_rom/extracted_payload/vendor.img" ]; then
               cp custom_rom/extracted_payload/vendor.img android_source/device/xiaomi/chopin/vendor/
           else
-              echo "❌ فایل vendor.img در مسیر custom_rom/extracted_payload/vendor.img وجود ندارد!"
+              echo "❌ فایل vendor.img در مسیر مورد نظر وجود ندارد!"
               exit 1
           fi
+
+      - name: تنظیم کلید SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: تست دسترسی SSH
+        id: ssh_test
+        run: |
+          if ssh -T git@github.com; then
+            echo "SSH connection successful."
+            echo "USE_SSH=true" >> $GITHUB_ENV
+          else
+            echo "SSH connection failed. Falling back to HTTPS with tokens."
+            echo "USE_SSH=false" >> $GITHUB_ENV
+          fi
+
+      - name: تنظیم توکن GitHub (در صورت شکست SSH)
+        if: env.USE_SSH == 'false'
+        run: |
+          git config --global url."https://${{ secrets.GITHUB_TOKEN_CLASSIC }}:@github.com/".insteadOf "https://github.com/"
 
       - name: نصب و استفاده از ابزار repo
         run: |
@@ -206,19 +202,12 @@ jobs:
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           export PATH="$HOME/bin:$PATH"
-          which repo || echo "❌ ابزار repo یافت نشد!"
-          ls -l ~/bin/repo
           cd android_source
-
-          # استفاده از توکن GitHub برای دسترسی به مخزن
-          git config --global url."https://${{ secrets.GITHUB_TOKEN }}:@github.com/".insteadOf "https://github.com/"
-
-          # تعریف آدرس مخزن PixelOS
-          REPO_URL="https://github.com/PixelOS-AOSP/platform_manifest.git"
-          BRANCH="pixel-14.0"
-
-          # اجرای repo init و repo sync
-          repo init -u "$REPO_URL" -b "$BRANCH" --no-clone-bundle
+          if [ "$USE_SSH" = "true" ]; then
+            repo init -u "git@github.com:PixelOS-AOSP/platform_manifest.git" -b pixel-14.0 --no-clone-bundle
+          else
+            repo init -u "https://github.com/PixelOS-AOSP/platform_manifest.git" -b pixel-14.0 --no-clone-bundle
+          fi
           repo sync -q -j$(nproc) --no-clone-bundle
 
       - name: کامپایل ریکاوری
