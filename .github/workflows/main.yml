@@ -132,6 +132,7 @@ jobs:
             echo "======================\nاستفاده از payload-dumper-go\n======================"
             if ! command -v payload-dumper-go &>/dev/null; then
               echo "❌ payload-dumper-go یافت نشد. در حال نصب..."
+              sudo apt install -y liblzma-dev
               git clone https://github.com/ssut/payload-dumper-go.git
               cd payload-dumper-go
               go build -o payload-dumper-go
@@ -179,15 +180,42 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan github.com >> ~/.ssh/known_hosts
 
+      - name: تست دسترسی SSH
+        id: ssh_test
+        run: |
+          if ssh -T git@github.com; then
+            echo "SSH connection successful."
+            echo "USE_SSH=true" >> $GITHUB_ENV
+          else
+            echo "SSH connection failed. Falling back to HTTPS with tokens."
+            echo "USE_SSH=false" >> $GITHUB_ENV
+          fi
+
+      - name: تنظیم توکن GitHub (در صورت شکست SSH)
+        if: env.USE_SSH == 'false'
+        run: |
+          git config --global url."https://${{ secrets.GITHUB_TOKEN_CLASSIC }}:@github.com/".insteadOf "https://github.com/"
+
       - name: نصب و استفاده از ابزار repo
         run: |
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           export PATH="$HOME/bin:$PATH"
+          
+          # تنظیم هویت Git (ضروری برای repo sync)
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          
+          # ایجاد دایرکتوری android_source
+          mkdir -p android_source
           cd android_source
-          repo init -u https://github.com/PixelOS-AOSP/manifest.git -b fourteen --git-lfs --no-clone-bundle
-          repo sync -q -j$(nproc) --no-clone-bundle
+          
+          # اجرای repo init
+          repo init -u https://github.com/PixelOS-AOSP/manifest.git -b fourteen --git-lfs
+          
+          # همگام‌سازی مخزن
+          repo sync -q -j$(nproc) --no-clone-bundle --force-sync
 
       - name: کامپایل ریکاوری
         run: |
